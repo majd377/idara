@@ -2,7 +2,7 @@ import {
   auth, provider, onAuthStateChanged, signInWithPopup, signOut,
   db, orgRef, orgCollection, orgDoc, doc, getDoc, getDocs, setDoc,
   addDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, ADMIN_EMAIL
-} from './firebase-init.js';
+} from './firebase-init-v13.js';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -39,12 +39,23 @@ function costsForPeriod(pid){return (state.data.costs||[]).filter(c=>c.periodId=
 function upsertLocal(c,row){const a=state.data[c]||[];const i=a.findIndex(x=>x.id===row.id);if(i>=0)a[i]={...a[i],...row};else a.push(row);state.data[c]=a;state.loaded=true;}
 function removeLocal(c,id){state.data[c]=(state.data[c]||[]).filter(x=>x.id!==id);state.loaded=true;}
 
+async function withTimeout(promise, ms, label){
+  let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('انتهت مهلة الاتصال أثناء تحميل '+label)),ms);});
+  try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
+}
 async function loadData(force=false){
   if(state.loaded&&!force)return;
   if(state.loading)return;
   state.loading=true;
-  try{const results=await Promise.all(COLLECTIONS.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));for(const [c,rows] of results)state.data[c]=rows;state.loaded=true;}
-  finally{state.loading=false;}
+  try{
+    const results=await Promise.all(COLLECTIONS.map(async c=>{
+      const snap=await withTimeout(getDocs(orgCollection(c)),10000,c);
+      return [c,snap.docs.map(d=>({id:d.id,...d.data()}))];
+    }));
+    for(const [c,rows] of results)state.data[c]=rows;
+    state.loaded=true;
+  }finally{state.loading=false;}
 }
 
 async function ensureProfile(){
