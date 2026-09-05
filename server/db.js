@@ -2,7 +2,7 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
 
-const dbDir = path.join(__dirname, '..', 'db');
+const dbDir = process.env.AMIN_DB_DIR || (process.env.VERCEL ? '/tmp/amin-building-manager-db' : path.join(__dirname, '..', 'db'));
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
 const database = new DatabaseSync(path.join(dbDir, 'amin.db'));

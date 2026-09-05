@@ -104,3 +104,10 @@ Subscriber Consumption × Applied Unit Price
 ## ملاحظة
 
 هذه النسخة هي Foundation تشغيلية حقيقية. قبل اعتبارها نسخة Production نهائية يجب استكمال الترحيل التاريخي الكامل من Excel، قواعد توزيع الخدمات والمصاريف، تسجيل الدخول والصلاحيات، اعتماد وإقفال الفترات، التقارير PDF/Excel، النسخ الاحتياطي الاحترافي، وربط قاعدة بيانات مستضافة عند استخدام النشر العام.
+
+
+## GitHub Pages
+
+The repository contains a root `index.html` and relative asset paths so GitHub Pages can render the UI correctly from a repository subpath. GitHub Pages cannot run the SQLite/Node backend, so it automatically switches to an interactive browser-only preview backed by `localStorage`.
+
+For the real local SQLite application use `npm install` then `npm start`.

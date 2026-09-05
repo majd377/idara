@@ -1,45 +1,46 @@
-# GitHub / Vercel publishing checklist
+# نشر عمارة الأمين على GitHub وVercel
 
-## 1) Create GitHub repository
+## لماذا ظهرت الصفحة بدون CSS والأزرار لا تعمل؟
 
-Create an empty repository on GitHub, for example:
+كان المشروع يستخدم مسارات جذرية مثل `/styles.css` و`/app.js`، وهي لا تعمل بشكل صحيح عندما يكون الموقع GitHub Pages على مسار مشروع مثل `https://USER.github.io/REPO/`. كذلك GitHub Pages يستضيف ملفات ثابتة فقط، لذلك لا يمكنه تشغيل Node.js/Express أو SQLite مباشرة.
 
-`amin-building-manager`
+هذه النسخة أصلحت الأمرين:
 
-## 2) Push this project
+- أضفت `index.html` في جذر المستودع.
+- جعلت ملفات CSS وJavaScript تستخدم مسارات نسبية.
+- أضفت `.nojekyll`.
+- أضفت `static-demo.js`؛ عند فتح الموقع من GitHub Pages يعمل كـ Demo تفاعلي محفوظ في المتصفح بواسطة `localStorage` حتى لا تكون الصفحة ميتة.
+- التشغيل المحلي الكامل يبقى Node.js + SQLite حقيقية.
 
-From the project folder:
+## GitHub Pages
 
-```bash
-git init
-git branch -M main
-git add .
-git commit -m "Initial professional Amin Building Manager"
-git remote add origin https://github.com/YOUR_USERNAME/amin-building-manager.git
-git push -u origin main
-```
+في GitHub:
 
-## 3) Run locally first
+1. ارفع محتويات المشروع إلى المستودع.
+2. افتح Settings → Pages.
+3. Source = Deploy from a branch.
+4. Branch = `main` وFolder = `/ (root)`.
+5. احفظ.
+
+بعدها افتح رابط Pages الخاص بالمستودع.
+
+## التشغيل الحقيقي محليًا
 
 ```bash
 npm install
 npm start
 ```
 
-Open:
+ثم:
 
 `http://localhost:3000`
 
-## 4) Important SQLite note
+البيانات الحقيقية تحفظ في:
 
-The production data file is `db/amin.db` and is intentionally ignored by Git.
+`db/amin.db`
 
-Back it up separately.
+## Vercel
 
-Do NOT use a writable local SQLite file as the production database on Vercel.
+Vercel مناسب لتشغيل طبقة Node/API، لكن لا تعتمد على SQLite داخل بيئة Vercel كقاعدة بيانات دائمة للحسابات الحقيقية. قبل الإنتاج على الإنترنت اربط التطبيق بقاعدة بيانات مستضافة دائمة.
 
-## 5) Vercel
-
-The repo contains `vercel.json` and `api/index.js`, but a persistent hosted database must be connected before treating the deployment as the real accounting system.
-
-For a hosted SQLite-compatible option, use Turso/libSQL. Another production option is PostgreSQL on a persistent database provider.
+الـ `vercel.json` و`api/index.js` موجودان لهذا الغرض، وتمت تهيئة مسار SQLite إلى `/tmp` على Vercel فقط حتى لا يفشل Runtime أثناء المعاينة، مع التنبيه أن البيانات هناك ليست تخزينًا إنتاجيًا دائمًا.

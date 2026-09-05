@@ -1,1 +1,78 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>عمارة الأمين — نظام الإدارة</title><link rel="stylesheet" href="/styles.css"></head><body><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">أ</div><div><strong>عمارة الأمين</strong><span>نظام إدارة الحسابات</span></div></div><nav><button class="nav-item active" data-view="dashboard">لوحة التحكم</button><button class="nav-item" data-view="subscribers">المشتركون</button><button class="nav-item" data-view="periods">الفترات والقراءات</button><button class="nav-item" data-view="costs">التكاليف والمولدات</button><button class="nav-item" data-view="payments">الدفعات</button><button class="nav-item" data-view="reports">التقارير</button><button class="nav-item" data-view="audit">سجل النشاط</button></nav><div class="side-note">نسخة تشغيلية أولى<br>قاعدة بيانات SQLite + API</div></aside><main class="main"><header class="topbar"><div><div class="eyebrow">إدارة الحسابات</div><h1 id="page-title">لوحة التحكم</h1></div><div class="top-actions"><button class="btn btn-secondary" id="refreshBtn">تحديث</button><button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button></div></header><div id="app"></div></main></div><div id="modal" class="modal hidden"><div class="modal-card"><button class="modal-close" id="modalClose">×</button><div id="modalBody"></div></div></div><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <meta name="description" content="نظام إدارة حسابات عمارة الأمين — المياه، المولدات، الخدمات والدفعات">
+  <title>عمارة الأمين — مركز الإدارة</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <noscript><div style="padding:18px;background:#fff3cd;color:#6b4f00;text-align:center;font-family:Arial">هذا النظام يحتاج JavaScript حتى يعمل.</div></noscript>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">أ</div>
+        <div class="brand-copy">
+          <strong>عمارة الأمين</strong>
+          <span>مركز إدارة الحسابات</span>
+        </div>
+      </div>
+
+      <div class="sidebar-section-label">الرئيسية</div>
+      <nav class="nav-group">
+        <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>لوحة التحكم</span></button>
+      </nav>
+
+      <div class="sidebar-section-label">الإدارة</div>
+      <nav class="nav-group">
+        <button class="nav-item" data-view="subscribers"><span class="nav-icon">◉</span><span>المشتركون</span></button>
+        <button class="nav-item" data-view="periods"><span class="nav-icon">▣</span><span>الفترات والقراءات</span></button>
+        <button class="nav-item" data-view="costs"><span class="nav-icon">◈</span><span>التكاليف والمولدات</span></button>
+        <button class="nav-item" data-view="payments"><span class="nav-icon">₪</span><span>الدفعات</span></button>
+      </nav>
+
+      <div class="sidebar-section-label">المراجعة</div>
+      <nav class="nav-group">
+        <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>التقارير</span></button>
+        <button class="nav-item" data-view="audit"><span class="nav-icon">◇</span><span>سجل النشاط</span></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-dot"></div>
+        <div><strong>SQLite محلي</strong><span>البيانات محفوظة على الجهاز</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-heading">
+          <div class="eyebrow">إدارة حسابات العمارة</div>
+          <h1 id="page-title">لوحة التحكم</h1>
+          <div class="page-subtitle" id="page-subtitle">نظرة سريعة على حالة الحسابات والفترة الحالية</div>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn" id="refreshBtn" title="تحديث البيانات">↻</button>
+          <button class="btn btn-secondary" data-go="periods">فتح الفترة الحالية</button>
+          <button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button>
+        </div>
+      </header>
+
+      <div id="app"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card">
+      <button class="modal-close" id="modalClose" aria-label="إغلاق">×</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="./static-demo.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

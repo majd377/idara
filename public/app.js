@@ -7,6 +7,11 @@ const money = (n) => `${fmt(n,2)} ₪`;
 const safe = (v) => String(v ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 
 async function api(url, opts={}) {
+  // GitHub Pages is static: there is no Node/SQLite backend there.
+  // static-demo.js provides a local browser demo so the UI remains interactive.
+  if (window.__AMIN_STATIC_DEMO__ && window.__AMIN_STATIC_API__) {
+    return window.__AMIN_STATIC_API__(url, opts);
+  }
   const r = await fetch(url, opts);
   let j={}; try { j=await r.json(); } catch {}
   if(!r.ok) throw new Error(j.error || 'حدث خطأ غير متوقع');
