@@ -1,17 +1,12 @@
 {
   "name": "amin-building-manager",
-  "version": "0.1.0",
+  "version": "10.0.0",
   "private": true,
-  "description": "نظام إدارة حسابات عمارة الأمين - مياه، طاقة، خدمات، دفعات، وتقارير",
+  "description": "عمارة الأمين — Firebase + Google + Firestore",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node server/index.js",
-    "import:excel": "node scripts/import-excel.js"
+    "start": "npx serve ."
   },
-  "dependencies": {
-    "better-sqlite3": "^11.7.0",
-    "express": "^5.1.0",
-    "multer": "^2.0.2",
-    "xlsx": "^0.18.5"
+  "engines": {
+    "node": ">=18"
   }
 }
