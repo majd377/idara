@@ -111,3 +111,10 @@ Subscriber Consumption × Applied Unit Price
 The repository contains a root `index.html` and relative asset paths so GitHub Pages can render the UI correctly from a repository subpath. GitHub Pages cannot run the SQLite/Node backend, so it automatically switches to an interactive browser-only preview backed by `localStorage`.
 
 For the real local SQLite application use `npm install` then `npm start`.
+
+
+## واجهة سهلة — الإصدار 2
+- القائمة الرئيسية أصبحت ستة أقسام واضحة فقط.
+- صفحة قراءات الماء تسمح بتعديل السابقة والحالية، مع حفظ الكل دفعة واحدة.
+- أضيف تصدير Excel حقيقي عند التشغيل المحلي، وتصدير CSV متوافق مع Excel في GitHub Pages.
+- الواجهة تركز على خطوات العمل اليومية بدل القوائم التقنية.

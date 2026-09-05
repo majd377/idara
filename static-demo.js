@@ -109,6 +109,7 @@
 
   async function api(url, opts={}) {
     await ensureData();
+    if (url.includes('/api/export/')) throw new Error('STATIC_EXPORT');
     const method=(opts.method||'GET').toUpperCase(), body=parseBody(opts);
     const path=url.split('?')[0];
     if (path === '/api/dashboard') {
@@ -171,3 +172,22 @@
     const note=document.createElement('div'); note.className='demo-banner'; note.innerHTML='وضع المعاينة على GitHub Pages — البيانات التي تدخلها هنا محفوظة في هذا المتصفح فقط. التشغيل المحلي الكامل يستخدم SQLite.'; top.prepend(note);
   });
 })();
+
+// Simple Excel-friendly export for GitHub Pages preview (CSV with UTF-8 BOM).
+window.__AMIN_STATIC_EXPORT__ = function(url,name){
+  try{
+    const path=url.split('?')[0];
+    let rows=[], headers=[];
+    if(path.includes('/export/subscribers')){
+      headers=['الكود','الاسم','البناية','الوحدة','الهاتف','الرصيد'];
+      rows=data.subscribers.map(s=>{const r=subscriberRow(s);return [r.code,r.name,r.building_name,r.unit_code,r.phone||'',r.balance]});
+    } else {
+      const m=path.match(/\/api\/export\/period\/(\d+)\.xlsx/); const pid=m?Number(m[1]):null;
+      const rr=data.readings.filter(r=>r.period_id===pid); headers=['الكود','الاسم','القراءة السابقة','القراءة الحالية','الاستهلاك','الحالة','قيمة المياه'];
+      rows=rr.map(r=>{const meter=data.meters.find(x=>x.id===r.meter_id);const s=data.subscribers.find(x=>x.id===meter?.subscriber_id);return [s?.code||'',s?.name||'',r.previous_reading??'',r.current_reading??'',r.consumption??'',r.status||'',r.charge_amount??'']});
+    }
+    const csv='\ufeff'+[headers,...rows].map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}); const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name.replace(/\.xlsx$/i,'.csv');document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),500); toast('تم تنزيل ملف يمكن فتحه مباشرة في Excel');
+  }catch(e){toast('تعذر التصدير','error')}
+};

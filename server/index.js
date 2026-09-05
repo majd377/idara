@@ -65,6 +65,15 @@ app.post('/api/import/excel', upload.single('file'), (req,res)=>{
   } catch(e){res.status(400).json({error:e.message});}
 });
 
+function sendXlsx(res, filename, headers, rows){
+  const ws=xlsx.utils.aoa_to_sheet([headers,...rows]);
+  const wb=xlsx.utils.book_new(); xlsx.utils.book_append_sheet(wb,ws,'تقرير');
+  const buf=xlsx.write(wb,{type:'buffer',bookType:'xlsx'});
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition',`attachment; filename="${encodeURIComponent(filename)}"`); res.send(buf);
+}
+app.get('/api/export/subscribers.xlsx',(req,res)=>{try{const rows=db.prepare(`SELECT s.code,s.name,b.name building_name,u.code unit_code,s.phone,COALESCE((SELECT SUM(debit-credit) FROM ledger_transactions lt WHERE lt.subscriber_id=s.id),0) balance FROM subscribers s LEFT JOIN units u ON u.id=s.unit_id LEFT JOIN buildings b ON b.id=u.building_id WHERE s.active=1 ORDER BY s.code`).all();sendXlsx(res,'المشتركون.xlsx',['الكود','الاسم','البناية','الوحدة','الهاتف','الرصيد'],rows.map(r=>[r.code,r.name,r.building_name||'',r.unit_code||'',r.phone||'',r.balance]));}catch(e){res.status(400).json({error:e.message})}});
+app.get('/api/export/period/:id.xlsx',(req,res)=>{try{const id=Number(req.params.id);const rows=db.prepare(`SELECT s.code subscriber_code,s.name subscriber_name,mr.previous_reading,mr.current_reading,mr.consumption,mr.status,mr.charge_amount,bp.label period_label FROM meter_readings mr JOIN meters m ON m.id=mr.meter_id LEFT JOIN subscribers s ON s.id=m.subscriber_id JOIN billing_periods bp ON bp.id=mr.period_id WHERE mr.period_id=? ORDER BY s.code`).all(id);sendXlsx(res,'تقرير-'+id+'.xlsx',['الكود','الاسم','القراءة السابقة','القراءة الحالية','الاستهلاك','الحالة','قيمة المياه','الفترة'],rows.map(r=>[r.subscriber_code||'',r.subscriber_name||'',r.previous_reading??'',r.current_reading??'',r.consumption??'',r.status||'',r.charge_amount??'',r.period_label||'']));}catch(e){res.status(400).json({error:e.message})}});
 app.get('/api/audit',(req,res)=>res.json(db.prepare(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100`).all()));
 app.get('/api/settings',(req,res)=>{ const org=db.prepare('SELECT * FROM organizations LIMIT 1').get(); res.json(org); });
 
