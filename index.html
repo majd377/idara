@@ -1,1 +1,80 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>عمارة الأمين — نظام الإدارة</title><link rel="stylesheet" href="/styles.css"></head><body><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">أ</div><div><strong>عمارة الأمين</strong><span>نظام إدارة الحسابات</span></div></div><nav><button class="nav-item active" data-view="dashboard">لوحة التحكم</button><button class="nav-item" data-view="subscribers">المشتركون</button><button class="nav-item" data-view="periods">الفترات والقراءات</button><button class="nav-item" data-view="costs">التكاليف والمولدات</button><button class="nav-item" data-view="payments">الدفعات</button><button class="nav-item" data-view="reports">التقارير</button><button class="nav-item" data-view="audit">سجل النشاط</button></nav><div class="side-note">نسخة تشغيلية أولى<br>قاعدة بيانات SQLite + API</div></aside><main class="main"><header class="topbar"><div><div class="eyebrow">إدارة الحسابات</div><h1 id="page-title">لوحة التحكم</h1></div><div class="top-actions"><button class="btn btn-secondary" id="refreshBtn">تحديث</button><button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button></div></header><div id="app"></div></main></div><div id="modal" class="modal hidden"><div class="modal-card"><button class="modal-close" id="modalClose">×</button><div id="modalBody"></div></div></div><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#123f3a">
+  <title>عمارة الأمين — إدارة الحسابات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <div id="boot" class="boot"><div class="boot-card"><div class="brand-logo">أ</div><h1>عمارة الأمين</h1><p>جاري تجهيز الحسابات…</p></div></div>
+
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-decoration d1"></div><div class="auth-decoration d2"></div>
+    <div class="auth-card">
+      <div class="brand-lockup"><div class="brand-logo">أ</div><div><b>عمارة الأمين</b><span>نظام إدارة الحسابات</span></div></div>
+      <div class="auth-chip">● تسجيل دخول آمن</div>
+      <h1>أهلاً وسهلاً</h1>
+      <p>سجّل الدخول بحساب Google للوصول إلى بيانات العمارة والقراءات والحسابات.</p>
+      <button id="googleLogin" class="google-btn"><span class="google-g">G</span><span>الدخول باستخدام Google</span></button>
+      <div id="auth-error" class="alert danger hidden"></div>
+      <small>بيانات الحسابات محفوظة في Firebase ولا تعتمد على جهاز واحد.</small>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-lockup sidebar-brand"><div class="brand-logo small">أ</div><div><b>عمارة الأمين</b><span>إدارة الحسابات</span></div></div>
+        <button id="quickPeriod" class="start-week"><span class="plus-circle">+</span><span><b>ابدأ أسبوعًا جديدًا</b><small>القراءات السابقة تنتقل تلقائيًا</small></span></button>
+      </div>
+
+      <div class="sidebar-nav-wrap">
+        <div class="nav-section"><div class="nav-title">شغلي اليومي</div>
+          <button class="nav-item active" data-view="dashboard"><span class="nav-ico">⌂</span><span>الرئيسية</span></button>
+          <button class="nav-item" data-view="periods"><span class="nav-ico">▣</span><span>الأسابيع والحساب</span></button>
+          <button class="nav-item" data-view="readings"><span class="nav-ico">◫</span><span>قراءات الماء</span></button>
+          <button class="nav-item" data-view="energy"><span class="nav-ico">ϟ</span><span>الكهرباء والمولدات</span></button>
+          <button class="nav-item" data-view="costs"><span class="nav-ico">₪</span><span>المصاريف والطوارئ</span></button>
+          <button class="nav-item" data-view="subscribers"><span class="nav-ico">♙</span><span>السكان والوحدات</span></button>
+          <button class="nav-item" data-view="payments"><span class="nav-ico">↙</span><span>الدفعات والأرصدة</span></button>
+        </div>
+        <div class="nav-section"><div class="nav-title">النتائج والملفات</div>
+          <button class="nav-item" data-view="reports"><span class="nav-ico">▤</span><span>التقارير والتصدير</span></button>
+          <button class="nav-item" data-view="guide"><span class="nav-ico">?</span><span>دليل استخدام عملي</span></button>
+        </div>
+        <div class="nav-section"><div class="nav-title">إدارة النظام</div>
+          <button class="nav-item" data-view="settings"><span class="nav-ico">⚙</span><span>الإعدادات والصلاحيات</span></button>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="cloud-status"><span class="dot"></span><div><b>البيانات متصلة</b><small>Firebase Cloud</small></div></div>
+        <div class="profile-mini"><div id="userAvatar" class="avatar">م</div><div class="profile-text"><b id="userName">المستخدم</b><small id="userRole">...</small></div><button id="logoutBtn" class="icon-btn" title="تسجيل الخروج">↪</button></div>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-left"><button id="mobileMenu" class="mobile-menu">☰</button><div><div class="breadcrumb">عمارة الأمين <span>›</span> <span id="crumbText">الرئيسية</span></div><h1 id="page-title">الرئيسية</h1><p id="page-subtitle">كل شيء أمامك بخطوات واضحة.</p></div></div>
+        <div class="topbar-actions"><button id="refreshBtn" class="btn ghost">↻ تحديث</button><button id="quickPaymentBtn" class="btn primary">+ تسجيل دفعة</button></div>
+      </header>
+      <section id="app"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="modal" class="modal hidden" aria-hidden="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
+
+  <script src="./firebase-init-v14.js"></script>
+  <script src="./app-v14.js"></script>
+</body>
+</html>
