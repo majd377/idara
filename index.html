@@ -1,1 +1,69 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>عمارة الأمين — نظام الإدارة</title><link rel="stylesheet" href="/styles.css"></head><body><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">أ</div><div><strong>عمارة الأمين</strong><span>نظام إدارة الحسابات</span></div></div><nav><button class="nav-item active" data-view="dashboard">لوحة التحكم</button><button class="nav-item" data-view="subscribers">المشتركون</button><button class="nav-item" data-view="periods">الفترات والقراءات</button><button class="nav-item" data-view="costs">التكاليف والمولدات</button><button class="nav-item" data-view="payments">الدفعات</button><button class="nav-item" data-view="reports">التقارير</button><button class="nav-item" data-view="audit">سجل النشاط</button></nav><div class="side-note">نسخة تشغيلية أولى<br>قاعدة بيانات SQLite + API</div></aside><main class="main"><header class="topbar"><div><div class="eyebrow">إدارة الحسابات</div><h1 id="page-title">لوحة التحكم</h1></div><div class="top-actions"><button class="btn btn-secondary" id="refreshBtn">تحديث</button><button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button></div></header><div id="app"></div></main></div><div id="modal" class="modal hidden"><div class="modal-card"><button class="modal-close" id="modalClose">×</button><div id="modalBody"></div></div></div><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#163b36">
+  <meta name="description" content="عمارة الأمين — إدارة السكان والقراءات والدفعات والحسابات">
+  <title>عمارة الأمين — إدارة الحسابات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div id="boot" class="boot">
+    <div class="boot-card"><div class="logo-mark">أ</div><h1>عمارة الأمين</h1><p>جاري تجهيز النظام…</p></div>
+  </div>
+
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-shape shape-a"></div><div class="auth-shape shape-b"></div>
+    <div class="auth-card">
+      <div class="brand-lockup"><div class="logo-mark">أ</div><div><div class="brand-name">عمارة الأمين</div><div class="brand-caption">نظام إدارة الحسابات</div></div></div>
+      <span class="auth-badge">آمن • سحابي • بسيط</span>
+      <h1>أهلًا بك 👋</h1>
+      <p>ادخل بحساب Google للوصول إلى حسابات العمارة والقراءات والدفعات.</p>
+      <button id="googleLogin" class="google-btn"><span class="google-icon">G</span><span>الدخول باستخدام Google</span></button>
+      <div id="auth-error" class="alert danger hidden"></div>
+      <small class="auth-note">بيانات العمارة محفوظة في Firestore ومشتركة بين الحسابات المصرح لها.</small>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand-lockup sidebar-brand"><div class="logo-mark">أ</div><div><div class="brand-name">عمارة الأمين</div><div class="brand-caption">إدارة الحسابات</div></div></div>
+        <button id="quickPeriod" class="quick-create"><span class="plus">+</span><span><b>ابدأ أسبوعًا جديدًا</b><small>جهّز القراءات من السابق</small></span></button>
+        <div class="nav-group-title">الإدارة</div>
+        <nav class="nav" id="mainNav">
+          <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>الرئيسية</span></button>
+          <button class="nav-item" data-view="subscribers"><span class="nav-icon">♙</span><span>السكان</span></button>
+          <button class="nav-item" data-view="readings"><span class="nav-icon">◫</span><span>قراءات الماء</span></button>
+          <button class="nav-item" data-view="costs"><span class="nav-icon">◌</span><span>المصاريف</span></button>
+          <button class="nav-item" data-view="payments"><span class="nav-icon">₪</span><span>الدفعات</span></button>
+          <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span><span>التقارير</span></button>
+        </nav>
+      </div>
+      <div class="sidebar-bottom">
+        <button id="settingsBtn" class="nav-item secondary"><span class="nav-icon">⚙</span><span>الإعدادات</span></button>
+        <div class="cloud-pill"><span class="pulse"></span><div><b>البيانات متصلة</b><small>Firebase Cloud</small></div></div>
+        <div class="user-mini"><div id="userAvatar" class="avatar">م</div><div class="user-mini-info"><b id="userName">المستخدم</b><small id="userRole">...</small></div><button id="logoutBtn" class="round-btn" title="تسجيل الخروج">↪</button></div>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-main"><button id="mobileMenu" class="mobile-menu">☰</button><div><div class="crumb">عمارة الأمين <span>•</span> الإدارة اليومية</div><h1 id="page-title">الرئيسية</h1><p id="page-subtitle">كل شيء مرتب أمامك، خطوة بخطوة.</p></div></div>
+        <div class="topbar-actions"><button id="refreshBtn" class="btn light">↻ تحديث</button><button id="quickPaymentBtn" class="btn primary">+ تسجيل دفعة</button></div>
+      </header>
+      <section id="app"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="modal" class="modal hidden" aria-hidden="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
