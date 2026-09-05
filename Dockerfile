@@ -18,6 +18,8 @@ COPY . .
 # قيم وهمية للبناء فقط (لا تُستخدم وقت التشغيل الفعلي، القيم الحقيقية تأتي من docker-compose/.env)
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 ENV AUTH_SECRET="build-time-placeholder-not-used-at-runtime-please-ignore-32chars"
+# يُفعّل output:"standalone" في next.config.ts — فقط داخل Docker (راجع next.config.ts)
+ENV DOCKER_BUILD=1
 RUN npm run build
 
 # ---------- المرحلة 3أ: صورة "المايجريتور" — تشغيل migrate ثم seed مرة واحدة ----------

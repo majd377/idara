@@ -46,6 +46,12 @@ npm run dev                  # http://localhost:3000
 ⚠️ **مهم:** لا تُصدّر `NODE_ENV=development` في الـ shell عند تشغيل `npm run build` — يتعارض مع
 وضع الإنتاج الداخلي لـ Next.js ويسبب فشل بناء غامض. اترك Next.js/Docker يديرانه تلقائيًا.
 
+⚠️ **مهم أيضًا:** بعد `git clone` والتشغيل محليًا بدون Docker، استخدم `npm run build && npm run start`
+كما هو (بدون أي متغيرات إضافية). لا تُعرّف `DOCKER_BUILD=1` يدويًا خارج Docker — فهذا المتغير يُفعّل
+وضع `output: "standalone"` في `next.config.ts`، وهو وضع خاص بصورة Docker فقط. تفعيله محليًا يؤدي إلى
+تحميل الصفحة كـ HTML بدون أي تنسيق (CSS/JS لا تُحمَّل) — وهي المشكلة الشائعة عند نقل المشروع عبر Git
+وتشغيله بطريقة غير متوقعة.
+
 ## البنية التقنية
 - **الواجهة/الخادم:** Next.js 16 (App Router) + TypeScript + Tailwind CSS، عربي RTL بالكامل.
 - **قاعدة البيانات:** PostgreSQL + Drizzle ORM (وليس Prisma — انظر السبب في `/docs/architecture.md`).
