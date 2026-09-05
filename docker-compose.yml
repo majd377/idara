@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-amin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?يجب تعيين كلمة مرور قوية في .env}
+      POSTGRES_DB: ${POSTGRES_DB:-amin_system}
+    volumes:
+      - amin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amin} -d ${POSTGRES_DB:-amin_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # يُشغَّل مرة واحدة عند كل "docker compose up": يطبّق migrations ثم seed (آمن لإعادة التشغيل)
+  migrator:
+    build:
+      context: .
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-amin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-amin_system}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?عرّف كلمة مرور آمنة لمستخدم المدير العام الأولي في .env}
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        # ثابت مقصود لهذا الإصدار أحادي المؤسسة — راجع src/db/seed.ts (DEFAULT_ORG_ID)
+        NEXT_PUBLIC_DEFAULT_ORG_ID: 11111111-1111-4111-8111-111111111111
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-amin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-amin_system}
+      AUTH_SECRET: ${AUTH_SECRET:?يجب تعيين AUTH_SECRET طويل وعشوائي (32+ حرفًا) في .env}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  amin_pgdata:
