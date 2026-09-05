@@ -1,22 +1,11 @@
-# رفع المشروع على GitHub Pages
+# نشر المشروع على GitHub Pages
 
-## 1) ارفع محتويات هذا المجلد إلى جذر المستودع
-يجب أن يكون `index.html` في جذر المستودع، وليس داخل مجلد إضافي.
+1. فك الضغط.
+2. ارفع كل الملفات الموجودة هنا إلى **جذر** مستودع GitHub.
+3. تأكد أن `index.html` موجود في الجذر.
+4. GitHub → Settings → Pages.
+5. Source: Deploy from a branch.
+6. Branch: main / root.
+7. افتح الرابط وانتظر النشر.
 
-## 2) من GitHub
-Settings → Pages → Deploy from a branch → `main` → `/ (root)` → Save
-
-## 3) ماذا يعمل على GitHub Pages؟
-نسخة المعاينة تعمل داخل المتصفح وتحفظ البيانات في `localStorage`، وتوفر تصديرًا بصيغة CSV متوافقة مباشرة مع Excel.
-
-## 4) ماذا يعمل محليًا؟
-التشغيل المحلي يستخدم Node.js + SQLite ويعطيك API وقاعدة بيانات حقيقية محلية. التصدير المحلي يكون XLSX حقيقيًا.
-
-## 5) التشغيل المحلي
-```bash
-npm install
-npm start
-```
-ثم افتح `http://localhost:3000`.
-
-Node.js 22 أو أحدث مطلوب لأن المشروع يستخدم SQLite المدمج في Node.
+مهم: GitHub Pages يستضيف الواجهة الثابتة. البيانات الحقيقية هنا تُخزن في Firebase Firestore، وليس في GitHub.

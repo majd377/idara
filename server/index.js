@@ -36,6 +36,29 @@ app.post('/api/subscribers',(req,res)=>{
   try { const {code,name,buildingId,unitCode,floor,phone,type='داخلي',guardFee=0,pumpInsurance=0,notes=''}=req.body; if(!code||!name) return res.status(400).json({error:'الكود والاسم مطلوبان'}); let unitId=null; if(buildingId&&unitCode){ const b=db.prepare('SELECT id FROM buildings WHERE id=?').get(buildingId); if(b){ const u=db.prepare('SELECT id FROM units WHERE building_id=? AND code=?').get(buildingId,unitCode); unitId=u?.id || db.prepare('INSERT INTO units(building_id,code,floor) VALUES (?,?,?)').run(buildingId,unitCode,floor||'').lastInsertRowid; }} const r=db.prepare(`INSERT INTO subscribers(organization_id,unit_id,code,name,phone,type,default_guard_fee,default_pump_insurance,notes) VALUES (?,?,?,?,?,?,?,?,?)`).run(orgId(),unitId,code,name,phone||null,type,guardFee,pumpInsurance,notes||null); audit('CREATE','subscriber',r.lastInsertRowid,null,req.body); res.json({id:r.lastInsertRowid}); } catch(e){res.status(400).json({error:e.message});}
 });
 
+app.put('/api/subscribers/:id',(req,res)=>{
+  try {
+    const id=Number(req.params.id); const current=db.prepare('SELECT * FROM subscribers WHERE id=?').get(id);
+    if(!current) return res.status(404).json({error:'الساكن غير موجود'});
+    const {code,name,buildingId,unitCode,floor,phone,type='داخلي',guardFee=0,pumpInsurance=0,notes=''}=req.body;
+    if(!code||!name) return res.status(400).json({error:'الكود والاسم مطلوبان'});
+    const duplicate=db.prepare('SELECT id FROM subscribers WHERE code=? AND id<>?').get(code,id);
+    if(duplicate) return res.status(400).json({error:'الكود مستخدم لسكان آخر'});
+    let unitId=current.unit_id;
+    if(buildingId&&unitCode){
+      const b=db.prepare('SELECT id FROM buildings WHERE id=?').get(buildingId);
+      if(b){
+        const u=db.prepare('SELECT id FROM units WHERE building_id=? AND code=?').get(buildingId,unitCode);
+        unitId=u?.id || db.prepare('INSERT INTO units(building_id,code,floor) VALUES (?,?,?)').run(buildingId,unitCode,floor||'').lastInsertRowid;
+        if(u && floor!==undefined) db.prepare('UPDATE units SET floor=? WHERE id=?').run(floor||'',u.id);
+      }
+    }
+    db.prepare(`UPDATE subscribers SET unit_id=?,code=?,name=?,phone=?,type=?,default_guard_fee=?,default_pump_insurance=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(unitId,code,name,phone||null,type,guardFee,pumpInsurance,notes||null,id);
+    audit('UPDATE','subscriber',id,current,req.body); res.json({id});
+  } catch(e){res.status(400).json({error:e.message});}
+});
+
+
 app.get('/api/periods',(req,res)=>res.json(db.prepare(`SELECT * FROM billing_periods ORDER BY start_date DESC`).all()));
 app.post('/api/periods',(req,res)=>{ try { const {label,startDate,endDate}=req.body; const r=db.prepare(`INSERT INTO billing_periods(organization_id,label,start_date,end_date) VALUES (?,?,?,?,?)`).run(orgId(),label||startDate,startDate,endDate); audit('CREATE','billing_period',r.lastInsertRowid,null,req.body); res.json({id:r.lastInsertRowid}); } catch(e){res.status(400).json({error:e.message});}});
 

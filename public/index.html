@@ -3,56 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#1f5eff">
-  <meta name="description" content="نظام بسيط وواضح لإدارة حسابات عمارة الأمين">
+  <meta name="theme-color" content="#0f3d3e">
+  <meta name="description" content="عمارة الأمين — إدارة الحسابات والمياه والخدمات">
   <title>عمارة الأمين — إدارة الحسابات</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-mark">أ</div>
-        <div>
-          <div class="brand-name">عمارة الأمين</div>
-          <div class="brand-sub">إدارة الحسابات</div>
-        </div>
+        <div><div class="brand-name">عمارة الأمين</div><div class="brand-sub">نظام إدارة الحسابات</div></div>
       </div>
-
-      <div class="nav-title">القائمة الرئيسية</div>
+      <div class="nav-title">الأقسام</div>
       <nav class="nav">
-        <button class="nav-item active" data-view="dashboard"><span class="icon">⌂</span><span>الرئيسية</span></button>
-        <button class="nav-item" data-view="subscribers"><span class="icon">👥</span><span>السكان</span></button>
-        <button class="nav-item" data-view="periods"><span class="icon">💧</span><span>قراءات الماء</span></button>
-        <button class="nav-item" data-view="costs"><span class="icon">⚡</span><span>المصاريف</span></button>
-        <button class="nav-item" data-view="payments"><span class="icon">💵</span><span>الدفعات</span></button>
-        <button class="nav-item" data-view="reports"><span class="icon">📊</span><span>التقارير</span></button>
+        <button class="nav-item active" data-view="dashboard"><span class="nav-ico">⌂</span><span>الرئيسية</span></button>
+        <button class="nav-item" data-view="subscribers"><span class="nav-ico">👥</span><span>السكان</span></button>
+        <button class="nav-item" data-view="periods"><span class="nav-ico">💧</span><span>قراءات الماء</span></button>
+        <button class="nav-item" data-view="costs"><span class="nav-ico">⚡</span><span>المصاريف</span></button>
+        <button class="nav-item" data-view="payments"><span class="nav-ico">💵</span><span>الدفعات</span></button>
+        <button class="nav-item" data-view="reports"><span class="nav-ico">📊</span><span>التقارير</span></button>
       </nav>
-
-      <div class="help-box">
-        <div class="help-icon">؟</div>
-        <div>
-          <strong>محتار من أين تبدأ؟</strong>
-          <span>ابدأ من «قراءات الماء»، والباقي يحسبه النظام.</span>
-        </div>
+      <div class="sidebar-note">
+        <span class="sidebar-note-icon">✓</span>
+        <div><strong>طريقة العمل</strong><span>أدخل القراءة الحالية فقط، والبرنامج يتولى الحساب.</span></div>
       </div>
-
-      <div class="local-status"><span class="dot"></span><div><strong>بيانات محلية</strong><span>SQLite على الجهاز</span></div></div>
+      <div class="local-status"><span class="status-dot"></span><div><strong>الحفظ المحلي مفعّل</strong><span>بيانات المعاينة تبقى في هذا المتصفح</span></div></div>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <div>
-          <div class="breadcrumb">عمارة الأمين <span>›</span> <span id="crumb">الرئيسية</span></div>
+        <div class="topbar-left">
+          <button class="mobile-menu" id="mobileMenu" aria-label="القائمة">☰</button>
+          <div class="eyebrow">عمارة الأمين <span>•</span> الحسابات اليومية</div>
           <h1 id="page-title">الرئيسية</h1>
-          <p id="page-subtitle">كل ما تحتاجه الإدارة في مكان واحد.</p>
+          <p id="page-subtitle">كل ما تحتاجه الإدارة في مكان واحد، بدون تعقيد.</p>
         </div>
         <div class="top-actions">
-          <button class="btn btn-light" id="refreshBtn">↻ تحديث</button>
-          <button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button>
+          <button class="btn btn-ghost" id="refreshBtn">↻ <span>تحديث</span></button>
+          <button class="btn btn-primary" id="quickPaymentBtn">＋ تسجيل دفعة</button>
         </div>
       </header>
-
       <div id="app"></div>
     </main>
   </div>
@@ -60,11 +51,10 @@
   <div id="toast" class="toast hidden"></div>
   <div id="modal" class="modal hidden" aria-hidden="true">
     <div class="modal-card">
-      <button class="modal-close" id="modalClose">×</button>
+      <button class="modal-close" id="modalClose" aria-label="إغلاق">×</button>
       <div id="modalBody"></div>
     </div>
   </div>
-
   <script src="./static-demo.js"></script>
   <script src="./app.js"></script>
 </body>

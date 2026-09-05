@@ -3,69 +3,70 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#1f5eff">
-  <meta name="description" content="نظام بسيط وواضح لإدارة حسابات عمارة الأمين">
-  <title>عمارة الأمين — إدارة الحسابات</title>
+  <meta name="theme-color" content="#1d5c56">
+  <meta name="description" content="عمارة الأمين — إدارة الحسابات والاستهلاك والخدمات والدفعات">
+  <title>عمارة الأمين — نظام إدارة الحسابات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-glow glow-a"></div><div class="auth-glow glow-b"></div>
+    <div class="auth-card">
+      <div class="auth-mark">أ</div>
+      <div class="auth-kicker">عمارة الأمين</div>
+      <h1>نظام الحسابات الذكي</h1>
+      <p>إدارة السكان، قراءات المياه، المصاريف والدفعات في مكان واحد.</p>
+      <button id="googleLogin" class="google-btn"><span class="google-g">G</span><span>الدخول باستخدام Google</span></button>
+      <div class="auth-note">بيانات العمارة محفوظة في قاعدة البيانات السحابية ويمكن الوصول إليها من الأجهزة المصرح لها.</div>
+      <div id="auth-error" class="auth-error hidden"></div>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-mark">أ</div>
-        <div>
-          <div class="brand-name">عمارة الأمين</div>
-          <div class="brand-sub">إدارة الحسابات</div>
-        </div>
+        <div><div class="brand-name">عمارة الأمين</div><div class="brand-sub">إدارة الحسابات</div></div>
       </div>
-
-      <div class="nav-title">القائمة الرئيسية</div>
+      <button class="new-period-btn" id="quickPeriod">＋ <span>فتح أسبوع جديد</span></button>
+      <div class="nav-title">إدارة العمارة</div>
       <nav class="nav">
-        <button class="nav-item active" data-view="dashboard"><span class="icon">⌂</span><span>الرئيسية</span></button>
-        <button class="nav-item" data-view="subscribers"><span class="icon">👥</span><span>السكان</span></button>
-        <button class="nav-item" data-view="periods"><span class="icon">💧</span><span>قراءات الماء</span></button>
-        <button class="nav-item" data-view="costs"><span class="icon">⚡</span><span>المصاريف</span></button>
-        <button class="nav-item" data-view="payments"><span class="icon">💵</span><span>الدفعات</span></button>
-        <button class="nav-item" data-view="reports"><span class="icon">📊</span><span>التقارير</span></button>
+        <button class="nav-item active" data-view="dashboard"><span class="nav-ico">⌂</span><span>الرئيسية</span></button>
+        <button class="nav-item" data-view="subscribers"><span class="nav-ico">♙</span><span>السكان</span></button>
+        <button class="nav-item" data-view="readings"><span class="nav-ico">◫</span><span>قراءات الماء</span></button>
+        <button class="nav-item" data-view="costs"><span class="nav-ico">◌</span><span>المصاريف</span></button>
+        <button class="nav-item" data-view="payments"><span class="nav-ico">₪</span><span>الدفعات</span></button>
+        <button class="nav-item" data-view="reports"><span class="nav-ico">▤</span><span>التقارير</span></button>
+        <button class="nav-item" data-view="settings"><span class="nav-ico">⚙</span><span>الإعدادات</span></button>
       </nav>
-
-      <div class="help-box">
-        <div class="help-icon">؟</div>
-        <div>
-          <strong>محتار من أين تبدأ؟</strong>
-          <span>ابدأ من «قراءات الماء»، والباقي يحسبه النظام.</span>
+      <div class="side-bottom">
+        <div class="cloud-status"><span class="status-dot"></span><div><strong>متصل بالبيانات</strong><small>Firebase Cloud + Offline Cache</small></div></div>
+        <div class="user-card" id="userCard">
+          <div class="avatar" id="userAvatar">م</div><div class="user-meta"><strong id="userName">المستخدم</strong><small id="userRole">...</small></div><button id="logoutBtn" class="icon-btn" title="تسجيل الخروج">⇥</button>
         </div>
       </div>
-
-      <div class="local-status"><span class="dot"></span><div><strong>بيانات محلية</strong><span>SQLite على الجهاز</span></div></div>
     </aside>
-
     <main class="main">
       <header class="topbar">
-        <div>
-          <div class="breadcrumb">عمارة الأمين <span>›</span> <span id="crumb">الرئيسية</span></div>
+        <div class="topbar-left">
+          <button class="mobile-menu" id="mobileMenu">☰</button>
+          <div class="eyebrow">عمارة الأمين <span>•</span> الإدارة اليومية</div>
           <h1 id="page-title">الرئيسية</h1>
-          <p id="page-subtitle">كل ما تحتاجه الإدارة في مكان واحد.</p>
+          <p id="page-subtitle">كل شيء مرتب أمامك، خطوة بخطوة.</p>
         </div>
-        <div class="top-actions">
-          <button class="btn btn-light" id="refreshBtn">↻ تحديث</button>
-          <button class="btn btn-primary" id="quickPaymentBtn">+ تسجيل دفعة</button>
-        </div>
+        <div class="top-actions"><button class="btn btn-ghost" id="refreshBtn">↻ تحديث</button><button class="btn btn-primary" id="quickPaymentBtn">＋ تسجيل دفعة</button></div>
       </header>
-
       <div id="app"></div>
     </main>
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-card">
-      <button class="modal-close" id="modalClose">×</button>
-      <div id="modalBody"></div>
-    </div>
-  </div>
+  <div id="modal" class="modal hidden"><div class="modal-card"><button class="modal-close" id="modalClose">×</button><div id="modalBody"></div></div></div>
 
-  <script src="./static-demo.js"></script>
-  <script src="./app.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

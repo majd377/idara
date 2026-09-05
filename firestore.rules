@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Root administrator is fixed to the owner's Google account.
+    // Keep all other access role-based through members/{uid}.
+    function signedIn() { return request.auth != null; }
+    function isRootAdmin() { return signedIn() && request.auth.token.email == 'mjdshbyr449@gmail.com'; }
+    function isMember(orgId) {
+      return signedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+    function role(orgId) {
+      return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role;
+    }
+    function staff(orgId) { return isMember(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']; }
+    function writer(orgId) { return isMember(orgId) && role(orgId) in ['admin','manager','accountant','operator']; }
+    function manager(orgId) { return isMember(orgId) && role(orgId) in ['admin','manager']; }
+
+    match /organizations/{orgId} {
+      match /meta/{docId} {
+        allow read: if staff(orgId);
+        allow create: if isRootAdmin() && orgId == 'amin-main' && docId == 'setup' && !exists(/databases/$(database)/documents/organizations/$(orgId)/meta/setup) && request.resource.data.ownerUid == request.auth.uid;
+        allow update, delete: if manager(orgId);
+      }
+
+      match /members/{uid} {
+        allow read: if isMember(orgId) || (signedIn() && uid == request.auth.uid);
+        // Only the configured root Google account may bootstrap/create itself as admin.
+        allow create: if signedIn() && uid == request.auth.uid && !exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(uid)) &&
+          ((isRootAdmin() && request.resource.data.role == 'admin') || request.resource.data.role == 'pending');
+        allow update: if manager(orgId)
+          || (signedIn() && uid == request.auth.uid && request.resource.data.role == resource.data.role)
+          || (isRootAdmin() && uid == request.auth.uid && request.resource.data.role == 'admin');
+        allow delete: if manager(orgId) && uid != request.auth.uid;
+      }
+
+      match /{collectionId}/{docId} {
+        allow read: if staff(orgId);
+        allow create: if writer(orgId);
+        allow update: if writer(orgId);
+        allow delete: if manager(orgId);
+      }
+    }
+  }
+}
