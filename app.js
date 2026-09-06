@@ -11,7 +11,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loaded:false,loading:false};
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
 const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts'];
-const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
+const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
 const money=v=>`${new Intl.NumberFormat('ar-PS',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v||0))} ₪`;
 const num=v=>Number(v||0);
 const fmt=(v,d=2)=>new Intl.NumberFormat('ar-PS',{maximumFractionDigits:d}).format(Number(v||0));
@@ -207,7 +207,7 @@ async function ensureDefaults(){
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent=subtitle;$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view)); }
-function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
+function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
 async function navigate(view,periodId=null,force=false){if(!state.profile||state.profile.role==='pending'){renderPending();return;}state.view=view;if(periodId)state.periodId=periodId;setActiveNav();await loadData(force);render();$('#sidebar')?.classList.remove('open');}
 
 function latestPeriods(){return [...(state.data.periods||[])].sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));}
@@ -353,8 +353,10 @@ function waterSummaryTable(pid){
 let __autoSaveTimers={};
 function queueAutoSave(key,fn){
   clearTimeout(__autoSaveTimers[key]);
-  __autoSaveTimers[key]=setTimeout(async()=>{try{await fn();if($('#autosaveGlobal')) $('#autosaveGlobal').textContent='محفوظ تلقائيًا ✓';}catch(e){console.error(e);toast('تعذر الحفظ التلقائي، استخدم «حفظ الآن»','error');}},700);
+  if($('#autosaveGlobal')) $('#autosaveGlobal').textContent='جاري الحفظ تلقائيًا…';
+  __autoSaveTimers[key]=setTimeout(async()=>{try{await fn();if($('#autosaveGlobal')) $('#autosaveGlobal').textContent='محفوظ تلقائيًا ✓';}catch(e){console.error(e);if($('#autosaveGlobal')) $('#autosaveGlobal').textContent='الحفظ يحتاج مراجعة';toast('تعذر الحفظ التلقائي، استخدم «حفظ الآن»','error');}finally{delete __autoSaveTimers[key];}},650);
 }
+window.addEventListener('beforeunload',e=>{if(Object.values(__autoSaveTimers).some(Boolean)){e.preventDefault();e.returnValue='';}});
 function bindWaterSummaryInputs(pid){
   $$('.ws-prev,.ws-current').forEach(inp=>inp.addEventListener('input',()=>{
     const tr=inp.closest('tr'),prev=tr.querySelector('.ws-prev').value,cur=tr.querySelector('.ws-current').value;
@@ -463,7 +465,7 @@ function showCostForm(pid,id){
   const c=id?(state.data.costs||[]).find(x=>x.id===id):null;const subs=(state.data.subscribers||[]).filter(s=>s.active!==false && s.type!=='خارجي');
   const currentAlloc=c?.allocationRule||'none';
   const defaultWaterIncluded=c?.waterPricingIncluded===false||['خدمة الحارس','تأمين الغاطس','استئجار مولد خارجي'].includes(String(c?.type||''))?'0':'1';
-  openModal(`<h2>${c?'تعديل مصروف':'إضافة مصروف أو خدمة'}</h2><p class="modal-lead">الحارس والمولد الخارجي والخدمات كلها تستخدم نفس نظام التوزيع.</p><div class="form-grid"><div class="field"><label>نوع البند</label><select id="cType"><option value="خدمة الحارس" ${c?.type==='خدمة الحارس'?'selected':''}>خدمة الحارس</option><option value="تأمين الغاطس" ${c?.type==='تأمين الغاطس'?'selected':''}>تأمين الغاطس</option><option value="استئجار مولد خارجي" ${c?.type==='استئجار مولد خارجي'?'selected':''}>استئجار مولد خارجي</option><option value="سولار / وقود" ${c?.type==='سولار / وقود'?'selected':''}>سولار / وقود</option><option value="نقل" ${c?.type==='نقل'?'selected':''}>نقل</option><option value="صيانة" ${c?.type==='صيانة'?'selected':''}>صيانة</option><option value="طوارئ" ${c?.type==='طوارئ'?'selected':''}>طوارئ</option><option value="كهرباء الدرج" ${c?.type==='كهرباء الدرج'?'selected':''}>كهرباء الدرج</option><option value="أخرى" ${c?.type==='أخرى'||!c?'selected':''}>أخرى</option></select></div><div class="field"><label>التاريخ</label><input id="cDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ الكامل</label><input id="cAmount" type="number" step="0.01" min="0" value="${c?.amount??''}" placeholder="مثال 1110"></div><div class="field"><label>يدخل في حساب سعر الكوب؟</label><select id="cWater"><option value="1" ${defaultWaterIncluded==='1'?'selected':''}>نعم، تكلفة تشغيل المياه</option><option value="0" ${defaultWaterIncluded==='0'?'selected':''}>لا، مصروف/خدمة مستقلة</option></select></div><div class="field"><label>طريقة التوزيع</label><select id="cAlloc"><option value="none" ${currentAlloc==='none'?'selected':''}>بدون توزيع على السكان</option><option value="equal_all" ${currentAlloc==='equal_all'?'selected':''}>على كل ساكن (المبلغ ÷ العدد)</option><option value="divide" ${currentAlloc==='divide'?'selected':''}>أقسم على عدد أحدده</option><option value="per_person" ${currentAlloc==='per_person'?'selected':''}>مبلغ على الشخص الواحد</option></select></div><div class="field"><label>عدد الأشخاص</label><input id="cCount" type="number" min="0" step="1" value="${c?.allocationCount??subs.length}" placeholder="مثال 37"></div><div class="field"><label>مبلغ الشخص الواحد (عند الاختيار)</label><input id="cPerPerson" type="number" min="0" step="0.01" value="${c?.perPersonAmount??''}" placeholder="مثال 30"></div><div class="field full" id="allocationPreviewBox"><div class="section-note">سيظهر حساب التوزيع هنا.</div></div><div class="field full"><label>البيان</label><input id="cDesc" value="${safe(c?.description||'')}"></div><div class="field full"><label>ملاحظات</label><textarea id="cNotes">${safe(c?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="saveCost">حفظ</button><button class="btn ghost" id="cancelCost">إلغاء</button></div>`);
+  openModal(`<h2>${c?'تعديل مصروف':'إضافة مصروف أو خدمة'}</h2><p class="modal-lead">الحارس والمولد الخارجي والخدمات كلها تستخدم نفس نظام التوزيع.</p><div class="form-grid"><div class="field"><label>نوع البند</label><select id="cType"><option value="تأمين الغاطس" ${c?.type==='تأمين الغاطس'?'selected':''}>تأمين الغاطس</option><option value="استئجار مولد خارجي" ${c?.type==='استئجار مولد خارجي'?'selected':''}>استئجار مولد خارجي</option><option value="سولار / وقود" ${c?.type==='سولار / وقود'?'selected':''}>سولار / وقود</option><option value="نقل" ${c?.type==='نقل'?'selected':''}>نقل</option><option value="صيانة" ${c?.type==='صيانة'?'selected':''}>صيانة</option><option value="طوارئ" ${c?.type==='طوارئ'?'selected':''}>طوارئ</option><option value="كهرباء الدرج" ${c?.type==='كهرباء الدرج'?'selected':''}>كهرباء الدرج</option><option value="أخرى" ${c?.type==='أخرى'||!c?'selected':''}>أخرى</option></select></div><div class="field"><label>التاريخ</label><input id="cDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ الكامل</label><input id="cAmount" type="number" step="0.01" min="0" value="${c?.amount??''}" placeholder="مثال 1110"></div><div class="field"><label>يدخل في حساب سعر الكوب؟</label><select id="cWater"><option value="1" ${defaultWaterIncluded==='1'?'selected':''}>نعم، تكلفة تشغيل المياه</option><option value="0" ${defaultWaterIncluded==='0'?'selected':''}>لا، مصروف/خدمة مستقلة</option></select></div><div class="field"><label>طريقة التوزيع</label><select id="cAlloc"><option value="none" ${currentAlloc==='none'?'selected':''}>بدون توزيع على السكان</option><option value="equal_all" ${currentAlloc==='equal_all'?'selected':''}>على كل ساكن (المبلغ ÷ العدد)</option><option value="divide" ${currentAlloc==='divide'?'selected':''}>أقسم على عدد أحدده</option><option value="per_person" ${currentAlloc==='per_person'?'selected':''}>مبلغ على الشخص الواحد</option></select></div><div class="field"><label>عدد الأشخاص</label><input id="cCount" type="number" min="0" step="1" value="${c?.allocationCount??subs.length}" placeholder="مثال 37"></div><div class="field"><label>مبلغ الشخص الواحد (عند الاختيار)</label><input id="cPerPerson" type="number" min="0" step="0.01" value="${c?.perPersonAmount??''}" placeholder="مثال 30"></div><div class="field full" id="allocationPreviewBox"><div class="section-note">سيظهر حساب التوزيع هنا.</div></div><div class="field full"><label>البيان</label><input id="cDesc" value="${safe(c?.description||'')}"></div><div class="field full"><label>ملاحظات</label><textarea id="cNotes">${safe(c?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="saveCost">حفظ</button><button class="btn ghost" id="cancelCost">إلغاء</button></div>`);
   const updatePreview=()=>{const box=$('#allocationPreviewBox');const v=allocationPreview($('#cAlloc').value,$('#cAmount').value,$('#cPerPerson').value,$('#cCount').value);box.innerHTML=v.count?`<div class="section-note"><b>نتيجة التوزيع:</b> ${safe(v.label)}<br>المبلغ المحمّل لكل ساكن: <b>${money(v.each)}</b> — إجمالي موزع: <b>${money(v.total)}</b></div>`:'<div class="section-note">هذا البند لن يضاف تلقائيًا على حساب السكان.</div>';};
   ['cAlloc','cAmount','cPerPerson','cCount'].forEach(k=>$('#'+k).addEventListener('input',updatePreview));updatePreview();$('#cancelCost').onclick=closeModal;
   $('#saveCost').onclick=async()=>{
@@ -521,7 +523,7 @@ function showSubscriberForm(id){
 async function archiveOrDelete(id){return deleteSubscriber(id);}
 
 function renderPayments(){
-  setTitle('الدفعات والأرصدة','سجّل أي دفعة، وسيتم خصم دفعة الفترة في آخر حساب الرسالة والكشف.');const pays=[...(state.data.payments||[])].sort((a,b)=>String(b.paymentDate||'').localeCompare(String(a.paymentDate||'')));const subs=(state.data.subscribers||[]).filter(s=>s.active!==false);
+  setTitle('الدفعات والأرصدة','الدفعة تبقى مرتبطة بالفترة التي سجلتها. في الأسبوع الجديد لا تظهر كدفعة جديدة؛ أثرها يُرحّل تلقائيًا في الرصيد. الزيادة تصبح رصيدًا دائنًا، والنقص يبقى دينًا/رصيدًا مستحقًا.');const pays=[...(state.data.payments||[])].sort((a,b)=>String(b.paymentDate||'').localeCompare(String(a.paymentDate||'')));const subs=(state.data.subscribers||[]).filter(s=>s.active!==false);
   $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>الدفعات</h2><p>يمكن حذف الدفعة من زر الحذف، وسيعود الرصيد للحساب تلقائيًا.</p></div><div class="panel-actions"><button class="btn soft" id="exportPayments">↓ Excel</button><button class="btn primary" id="newPay">+ تسجيل دفعة</button></div></div><div class="toolbar"><input id="paySearch" class="search" placeholder="ابحث باسم الساكن أو رقم الإيصال…"></div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>الساكن</th><th>المبلغ</th><th>الطريقة</th><th>الإيصال</th><th>الرصيد</th><th>إجراءات</th></tr></thead><tbody id="payBody">${paymentRows(pays)}</tbody></table></div></section>`;
   $('#newPay').onclick=showPaymentForm;$('#exportPayments').onclick=()=>exportPayments(pays);$('#paySearch').oninput=e=>$('#payBody').innerHTML=paymentRows(pays.filter(p=>{const s=(state.data.subscribers||[]).find(x=>x.id===p.subscriberId);return [s?.name,p.receiptNumber].some(v=>String(v||'').includes(e.target.value))}));$$('[data-delete-payment]').forEach(b=>b.onclick=()=>deletePayment(b.dataset.deletePayment));
 }
@@ -532,11 +534,67 @@ function showPaymentForm(){const subs=(state.data.subscribers||[]).filter(s=>s.a
 function showServiceForm(pid){
   if(!can('admin','manager','accountant')){toast('الخدمات مخصصة للإدارة والمحاسبة','error');return;}
   const active=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');
-  openModal(`<h2>الخدمات الدورية</h2><p class="modal-lead">أضف خدمة الحارس وتأمين الغاطس للسكان لهذا الأسبوع. يمكنك حذف هذين النوعين من الخدمات لاحقًا.</p><div class="section-note">القيم الافتراضية تأتي من بيانات الساكن ويمكن تعديلها من صفحة السكان.</div><div class="table-wrap"><table class="table"><thead><tr><th>الكود</th><th>الساكن</th><th>الحارس</th><th>تأمين الغاطس</th></tr></thead><tbody>${active.map(s=>`<tr><td>${safe(s.code)}</td><td>${safe(s.name)}</td><td>${money(s.defaultGuardFee||0)}</td><td>${money(s.defaultPumpInsurance||0)}</td></tr>`).join('')}</tbody></table></div><div class="actions"><button class="btn primary" id="applyServices">إضافة الخدمات غير المضافة</button><button class="btn danger" id="deleteServices">حذف خدمات الحارس وتأمين الغاطس لهذا الأسبوع</button><button class="btn ghost" id="cancelServices">إلغاء</button></div>`);
+  openModal(`<h2>تأمين الغاطس</h2><p class="modal-lead">خدمة الحارس لها صفحة مستقلة. من هنا نضيف تأمين الغاطس فقط لهذا الأسبوع.</p><div class="section-note">القيم الافتراضية تأتي من بيانات الساكن ويمكن تعديلها من صفحة السكان.</div><div class="table-wrap"><table class="table"><thead><tr><th>الكود</th><th>الساكن</th><th>تأمين الغاطس</th></tr></thead><tbody>${active.map(s=>`<tr><td>${safe(s.code)}</td><td>${safe(s.name)}</td><td>${money(s.defaultPumpInsurance||0)}</td></tr>`).join('')}</tbody></table></div><div class="actions"><button class="btn primary" id="applyServices">إضافة التأمين غير المضاف</button><button class="btn danger" id="deleteServices">حذف تأمين الغاطس لهذا الأسبوع</button><button class="btn ghost" id="cancelServices">إلغاء</button></div>`);
   $('#cancelServices').onclick=closeModal;
-  $('#applyServices').onclick=async()=>{const ops=[];let count=0;for(const s of active){if(num(s.defaultGuardFee)>0 && !(state.data.ledger||[]).some(x=>x.periodId===pid&&x.subscriberId===s.id&&x.transactionType==='SERVICE'&&x.serviceCode==='GUARD')){const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:s.id,periodId:pid,transactionType:'SERVICE',serviceCode:'GUARD',debit:num(s.defaultGuardFee),credit:0,description:'خدمة الحارس',createdAt:serverTimestamp(),createdBy:state.user.uid}));count++;}if(num(s.defaultPumpInsurance)>0 && !(state.data.ledger||[]).some(x=>x.periodId===pid&&x.subscriberId===s.id&&x.transactionType==='SERVICE'&&x.serviceCode==='PUMP_INSURANCE')){const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:s.id,periodId:pid,transactionType:'SERVICE',serviceCode:'PUMP_INSURANCE',debit:num(s.defaultPumpInsurance),credit:0,description:'تأمين الغاطس',createdAt:serverTimestamp(),createdBy:state.user.uid}));count++;}}await commitOps(ops);state.loaded=false;await loadData(true);closeModal();toast(`تمت إضافة ${count} رسوم خدمة`);renderPeriods();};
-  $('#deleteServices').onclick=()=>deletePeriodicServices(pid);
+  $('#applyServices').onclick=async()=>{const ops=[];let count=0;for(const s of active){if(num(s.defaultPumpInsurance)>0 && !(state.data.ledger||[]).some(x=>x.periodId===pid&&x.subscriberId===s.id&&x.transactionType==='SERVICE'&&x.serviceCode==='PUMP_INSURANCE')){const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:s.id,periodId:pid,transactionType:'SERVICE',serviceCode:'PUMP_INSURANCE',debit:num(s.defaultPumpInsurance),credit:0,description:'تأمين الغاطس',createdAt:serverTimestamp(),createdBy:state.user.uid}));count++;}}await commitOps(ops);state.loaded=false;await loadData(true);closeModal();toast(`تمت إضافة ${count} رسوم تأمين`);renderPeriods();};
+  $('#deleteServices').onclick=()=>deletePumpInsuranceServices(pid);
 }
+async function deletePumpInsuranceServices(pid){
+  if(!can('admin','manager','accountant')){toast('لا تملك صلاحية الحذف','error');return;}
+  const rows=(state.data.ledger||[]).filter(x=>x.periodId===pid&&x.transactionType==='SERVICE'&&x.serviceCode==='PUMP_INSURANCE');
+  if(!rows.length){toast('لا توجد رسوم تأمين لحذفها');return;}
+  if(!confirm(`حذف ${rows.length} حركة تأمين غاطس لهذا الأسبوع؟`))return;
+  await commitOps(rows.map(r=>b=>b.delete(orgDoc('ledger',r.id))));state.loaded=false;await loadData(true);toast('تم حذف رسوم تأمين الغاطس');renderPeriods();
+}
+
+function renderGuard(){
+  setTitle('خدمة الحارس','ضع مبلغ الحارس على الشخص الواحد، واستثنِ أي سكان لا يدفعون خدمة الحارس.');
+  if(!can('admin','manager','accountant')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','خدمة الحارس مخصصة للإدارة والمحاسبة.')}</section>`;return;}
+  const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();
+  if(!p){$('#app').innerHTML=`<section class="panel">${empty('لا يوجد أسبوع','افتح أسبوعًا أولًا.')}</section>`;return;}
+  const residents=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي').sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
+  const guardRows=(state.data.ledger||[]).filter(x=>x.periodId===p.id&&x.transactionType==='SERVICE'&&x.serviceCode==='GUARD');
+  const appliedByResident=new Map(guardRows.map(x=>[x.subscriberId,num(x.debit)-num(x.credit)]));
+  const amountDefault=guardRows.length?([...appliedByResident.values()][0]||0):0;
+  const excluded=new Set(residents.filter(s=>!appliedByResident.has(s.id)).map(s=>s.id));
+  const checkedCount=residents.length-excluded.size;
+  const totalExisting=guardRows.reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
+  $('#app').innerHTML=`<section class="panel">
+    <div class="panel-head"><div><h2>خدمة الحارس</h2><p>المبلغ الذي تدخله هنا هو <b>على الشخص الواحد</b>. اختر من لا يدفع الخدمة وسيُستثنى تلقائيًا.</p></div><button class="btn ghost" id="guardDeleteWeek">حذف خدمات الحارس لهذا الأسبوع</button></div>
+    <div class="period-picker"><label>الأسبوع</label><select id="guardPeriod" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div>
+    <div class="money-grid">
+      <div class="money-card"><small>المبلغ على الشخص الواحد</small><b id="guardEach">${money(amountDefault)}</b></div>
+      <div class="money-card"><small>عدد المشمولين</small><b id="guardCount">${checkedCount}</b></div>
+      <div class="money-card"><small>إجمالي الحارس</small><b id="guardTotal">${money(totalExisting)}</b></div>
+    </div>
+    <div class="form-grid" style="margin-top:14px"><div class="field"><label>المبلغ على الشخص الواحد</label><input id="guardAmount" type="number" min="0" step="0.01" value="${amountDefault||''}" placeholder="مثال 30"></div></div>
+    <div class="section-note"><b>لا يدفع خدمة الحارس:</b> علّم الأشخاص الذين لا تشملهم الخدمة. مثلًا الحواصل أو أي ساكن آخر حسب قرار الإدارة.</div>
+    <div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th style="width:70px">يدفع؟</th><th>الكود</th><th>الساكن</th><th>المبلغ</th></tr></thead><tbody id="guardBody">${residents.map(s=>{const on=!excluded.has(s.id);return `<tr><td><input type="checkbox" class="guardInclude" data-sid="${s.id}" ${on?'checked':''}></td><td><span class="code">${safe(s.code)}</span></td><td>${safe(s.name)}</td><td class="guardRowAmount">${on?money(amountDefault):money(0)}</td></tr>`}).join('')}</tbody></table></div>
+    <div class="actions"><button class="btn primary" id="saveGuard">حفظ خدمة الحارس</button><button class="btn ghost" id="guardReset">إلغاء الاختيارات</button></div>
+  </section>`;
+  const recalc=()=>{const amt=num($('#guardAmount').value);const included=$$('.guardInclude').filter(x=>x.checked);$('#guardEach').textContent=money(amt);$('#guardCount').textContent=String(included.length);$('#guardTotal').textContent=money(amt*included.length);$$('.guardInclude').forEach(x=>{x.closest('tr').querySelector('.guardRowAmount').textContent=x.checked?money(amt):money(0);});};
+  $('#guardPeriod').onchange=e=>navigate('guard',e.target.value);
+  $('#guardAmount').oninput=recalc;$$('.guardInclude').forEach(x=>x.addEventListener('change',recalc));recalc();
+  $('#guardReset').onclick=()=>{$$('.guardInclude').forEach(x=>x.checked=true);recalc();};
+  $('#guardDeleteWeek').onclick=()=>deleteGuardServices(p.id);
+  $('#saveGuard').onclick=async()=>{
+    const amt=num($('#guardAmount').value);const included=$$('.guardInclude').filter(x=>x.checked).map(x=>x.dataset.sid);
+    if(amt<0){toast('المبلغ غير صحيح','error');return;}
+    if(!included.length&&amt>0){toast('اختر سكانًا لتوزيع الخدمة','error');return;}
+    if(guardRows.length && !confirm('خدمة الحارس موجودة مسبقًا لهذا الأسبوع. سيتم حذفها وإعادة إنشائها حسب الاختيارات الجديدة. هل تريد المتابعة؟'))return;
+    const ops=[];for(const row of guardRows)ops.push(b=>b.delete(orgDoc('ledger',row.id)));
+    for(const sid of included){const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:sid,periodId:p.id,transactionType:'SERVICE',serviceCode:'GUARD',debit:amt,credit:0,description:'خدمة الحارس',createdAt:serverTimestamp(),createdBy:state.user.uid}));}
+    await commitOps(ops);state.loaded=false;await loadData(true);toast(`تم حفظ خدمة الحارس: ${included.length} × ${money(amt)}`);renderGuard();
+  };
+}
+async function deleteGuardServices(pid){
+  if(!can('admin','manager','accountant')){toast('لا تملك صلاحية الحذف','error');return;}
+  const rows=(state.data.ledger||[]).filter(x=>x.periodId===pid&&x.transactionType==='SERVICE'&&x.serviceCode==='GUARD');
+  if(!rows.length){toast('لا توجد خدمة حارس لهذا الأسبوع');return;}
+  if(!confirm(`حذف خدمة الحارس عن ${rows.length} ساكن لهذا الأسبوع؟`))return;
+  await commitOps(rows.map(r=>b=>b.delete(orgDoc('ledger',r.id))));state.loaded=false;await loadData(true);toast('تم حذف خدمة الحارس');renderGuard();
+}
+
 async function calculateWeek(pid){
   if(!can('admin','manager','accountant')){toast('الحساب النهائي يحتاج صلاحية إدارية','error');return;}const t=currentTotals(pid);if(!t.period){toast('الأسبوع غير موجود','error');return;}
   const externalSummary=waterSummaryForPeriod(pid).find(r=>r.key==='external'||r.type==='external');const breakdown=buildingWaterBreakdown(pid);
@@ -594,6 +652,8 @@ function subscriberFinancialSummary(id,periodId=null){
   const before=p?ledger.filter(x=>{const per=periodById(x.periodId);return !per || String(per.startDate)<String(p.startDate)}):ledger;
   const current=p?ledger.filter(x=>x.periodId===p.id):[];
   const previousBalance=before.reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
+  const previousDebt=Math.max(0,previousBalance);
+  const previousCredit=Math.max(0,-previousBalance);
   const reading=(state.data.readings||[]).find(r=>p&&r.periodId===p.id && (state.data.meters||[]).some(m=>m.id===r.meterId&&m.subscriberId===id));
   const price=readingManualPrice(reading)??(p?currentTotals(p.id).appliedPrice:0);
   const currentConsumption=reading?.currentReading!=null&&reading?.previousReading!=null?Math.max(0,num(reading.currentReading)-num(reading.previousReading))/1000:0;
@@ -605,14 +665,16 @@ function subscriberFinancialSummary(id,periodId=null){
   const totalPayments=ledger.filter(x=>x.transactionType==='PAYMENT').reduce((a,x)=>a+num(x.credit),0);
   const finalBeforePayments=previousBalance+currentWater+services+debtsCurrent+other;
   const finalBalance=finalBeforePayments-periodPayments;
-  return {s,p,previousBalance,currentWater,currentConsumption,services,debtsCurrent,other,periodPayments,totalPayments,finalBeforePayments,unpaidDebts:Math.max(0,previousBalance),finalBalance,appliedPrice:price};
+  return {s,p,previousBalance,previousDebt,previousCredit,currentWater,currentConsumption,services,debtsCurrent,other,periodPayments,totalPayments,finalBeforePayments,unpaidDebts:previousDebt,finalBalance,appliedPrice:price};
 }
 function messageForResident(sum){
   const name=sum.s.name||'الساكن';
   const end=sum.p?.endDate||dateNow();
   const dayName=new Date(end+'T12:00:00').toLocaleDateString('ar-PS',{weekday:'long'});
   const day=`${dayName} ${fmtDate(end)}`;
-  return `السلام عليكم ${name}\nتفاصيل حساب عمارة الأمين حتى يوم ${day}\nسحب المياه هذا الأسبوع : ${fmt(sum.currentConsumption,3)} كوب\nقيمة مياه الأسبوع : ${money(sum.currentWater)}\nخدمات الحارس + تأمين الغاطس : ${money(sum.services)}\nالرصيد السابق + الديون السابقة : ${money(Math.max(0,sum.previousBalance))}\nالإجمالي قبل الدفعات : ${money(Math.max(0,sum.finalBeforePayments))}\nالدفعات المسجلة : ${money(sum.periodPayments)}\nالإجمالي المطلوب : ${money(Math.max(0,sum.finalBalance))}\nوشكرا لتعاونكم`;
+  const prevLine=sum.previousDebt>0?money(sum.previousDebt):(sum.previousCredit>0?`رصيد دائن ${money(sum.previousCredit)}`:money(0));
+  const required=Math.max(0,sum.finalBalance);
+  return `السلام عليكم ${name}\nتفاصيل حساب عمارة الأمين حتى يوم ${day}\nسحب المياه هذا الأسبوع : ${fmt(sum.currentConsumption,3)} كوب\nقيمة مياه الأسبوع : ${money(sum.currentWater)}\nخدمات الحارس + تأمين الغاطس : ${money(sum.services)}\nالرصيد السابق + الديون السابقة : ${prevLine}\nالإجمالي قبل الدفعات : ${money(Math.max(0,sum.finalBeforePayments))}\nالدفعات المسجلة : ${money(sum.periodPayments)}\nالإجمالي المطلوب : ${money(required)}\nوشكرا لتعاونكم`;
 }
 
 function renderResidentReportCard(id){
@@ -686,7 +748,8 @@ function showGuide(){
     {title:'رابعًا: أضف السولار والطوارئ',text:'اذهب إلى «المصاريف والطوارئ». سجّل السولار، إيجار المولد الخارجي، النقل، الصيانة أو أي طارئ. لا تحسبها يدويًا.',demo:'cost',go:'costs'},
     {title:'خامسًا: احسب سعر الكوب',text:'من «الأسابيع والحساب» ستشاهد تكلفة التشغيل، استهلاك البناية الأولى والثانية والخارجي، ثم السعر الخام وسعر الكوب المعتمد.',demo:'calc',go:'periods'},
     {title:'سادسًا: راجع السكان والدفعات',text:'عدّل بيانات أي ساكن من «السكان والوحدات»، وسجّل الدفع من «الدفعات والأرصدة». الرصيد يُبنى من الحركات.',demo:'money',go:'subscribers'},
-    {title:'سابعًا: نزّل Excel',text:'من «التقارير والتصدير» اختر التقرير المطلوب واضغط «تنزيل Excel».',demo:'excel',go:'reports'}
+    {title:'سابعًا: خدمة الحارس',text:'من «خدمة الحارس» اكتب المبلغ على الشخص الواحد، وأزل علامة الدفع عن أي ساكن لا يدفع الحارس. البرنامج يحسب العدد والإجمالي تلقائيًا.',demo:'money',go:'guard'},
+    {title:'ثامنًا: نزّل Excel',text:'من «التقارير والتصدير» اختر التقرير المطلوب واضغط «تنزيل Excel».',demo:'excel',go:'reports'}
   ];let i=0;const draw=()=>{const s=steps[i];let demo='';if(s.demo==='water')demo='<div class="demo-card-grid"><div class="demo-card"><small>السابقة</small><b>125000</b></div><div class="demo-card"><small>الحالية</small><b>126500</b></div><div class="demo-card"><small>السحب</small><b>1.500 كوب</b></div></div>';else if(s.demo==='energy')demo='<div class="demo-card-grid"><div class="demo-card"><small>أبو زايد — السابقة</small><b>1520</b></div><div class="demo-card"><small>الحالية</small><b>1548</b></div><div class="demo-card"><small>التكلفة</small><b>28 × السعر</b></div></div>';else if(s.demo==='cost')demo='<div class="demo-card-grid"><div class="demo-card"><small>مولد خارجي</small><b>استئجار</b></div><div class="demo-card"><small>سولار</small><b>وقود</b></div><div class="demo-card"><small>طارئ</small><b>صيانة</b></div></div>';else if(s.demo==='calc')demo='<div class="demo-card-grid"><div class="demo-card"><small>البناية 1</small><b>xx.xxx</b></div><div class="demo-card"><small>البناية 2</small><b>xx.xxx</b></div><div class="demo-card"><small>الخارجي</small><b>xx.xxx</b></div></div>';else if(s.demo==='excel')demo='<div class="demo-row"><span>تقرير قراءات</span><b>↓ تنزيل Excel</b></div><div class="demo-row"><span>ملخص الحساب</span><b>↓ تنزيل Excel</b></div>';else demo='<div class="demo-row"><span>الرصيد</span><b>325.00 ₪</b></div><div class="demo-row"><span>دفعة</span><b>−100.00 ₪</b></div>';openModal(`<div class="guide-hero"><div class="guide-topline"><span class="guide-badge">شرح عملي</span><span class="guide-counter">${i+1} / ${steps.length}</span></div><h2>${s.title}</h2><p>${s.text}</p></div><div class="guide-demo"><div class="demo-title">هكذا ستراه داخل الموقع</div>${demo}</div><div class="guide-actions"><button class="btn ghost" id="guideClose">إغلاق</button><div class="guide-actions-right"><button class="btn ghost" id="guidePrev" ${i===0?'disabled':''}>السابق</button><button class="btn primary" id="guideDo">اذهب لهذه الخطوة →</button></div></div>`);$('#guideClose').onclick=closeModal;$('#guidePrev').onclick=()=>{if(i>0){i--;draw();}};$('#guideDo').onclick=()=>{closeModal();navigate(s.go);};};draw();}
 function renderPending(){setTitle('بانتظار الموافقة','حسابك معروف، لكن المدير لم يمنحك صلاحية بعد.');$('#app').innerHTML=`<section class="panel" style="max-width:680px;margin:50px auto;text-align:center;padding:40px"><div style="font-size:40px">⌛</div><h2>باقي موافقة المدير</h2><p class="muted">${safe(state.user?.email||'حسابك')} مسجل. بعد موافقة المدير ستظهر بيانات العمارة.</p><button class="btn primary" id="reloadPending">تحديث</button></section>`;$('#reloadPending').onclick=()=>location.reload();}
 

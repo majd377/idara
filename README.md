@@ -50,3 +50,10 @@
 - Added cost allocation modes: equal per resident, divide by N, fixed amount per resident.
 - Added guard service and external generator as cost types.
 - Subscriber edits are restricted to administrative roles in the UI.
+
+
+## V21 additions
+- Guard service is a standalone module with per-person amount and exclusions.
+- Pump insurance remains separate from guard.
+- Payment rollover is represented by the ledger: period-specific payments stay in their original period; unpaid/overpaid effects roll into the next period balance.
+- Auto-save status is explicit and delayed 650ms to reduce accidental data loss.
