@@ -12,7 +12,7 @@ const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loa
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
 const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts'];
 const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
-const money=v=>`${new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(v||0))} ₪`;
+const money=v=>`${new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(Math.round(Number(v||0)))} ₪`;
 const money0=v=>`${new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(Math.round(Number(v||0)))} ₪`;
 const num=v=>Number(v||0);
 const fmt=(v,d=2)=>new Intl.NumberFormat('en-US',{maximumFractionDigits:d}).format(Number(v||0));

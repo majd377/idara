@@ -67,7 +67,7 @@
 - Delete controls follow Firestore's manager/admin delete permissions.
 
 
-## V24 changes
+## V25 changes
 - English digits throughout numeric formatting.
 - Guard service is monthly: only the first billing period of each calendar month charges it.
 - Removed balance column from payments.
