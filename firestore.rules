@@ -26,7 +26,7 @@ service cloud.firestore {
 
       match /{collectionId}/{docId} {
         allow read: if staff(orgId);
-        allow create, update: if writer(orgId);
+        allow create, update: if manager(orgId) || (writer(orgId) && !(collectionId in ['subscribers']));
         allow delete: if manager(orgId);
       }
     }
