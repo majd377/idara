@@ -10,8 +10,8 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loaded:false,loading:false};
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
-const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts'];
-const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
+const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts','fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals','solarStock'];
+const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',fund:'إيرادات وصندوق العمارة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
 const roundMoney=v=>Math.round(Number(v||0));
 const formatFinancialInteger=v=>new Intl.NumberFormat('en-US',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:true}).format(Math.round(Number(v||0)));
 const money=v=>`${formatFinancialInteger(v)} ₪`;
@@ -225,25 +225,30 @@ async function ensureDefaults(){
 }
 
 function renderHistorical(){
-  setTitle('البيانات التاريخية','عرض البيانات المضمنة من النسخة الأصلية بدون تعديل البيانات الحالية');
-  const periods=[...(state.data.periods||[])].sort((a,b)=>String(a.startDate||'').localeCompare(String(b.startDate||'')));
-  const readings=state.data.readings||[];
-  const energy=state.data.energyReadings||[];
-  const costs=state.data.costs||[];
-  const water=state.data.waterSummary||[];
-  const rows=periods.map(p=>{
-    const rs=readings.filter(r=>r.periodId===p.id);
-    const es=energy.filter(r=>r.periodId===p.id);
-    const cs=costs.filter(r=>r.periodId===p.id);
-    const ws=water.find(r=>r.periodId===p.id);
-    return `<tr><td class="ltr">${safe(p.startDate||'')}</td><td class="ltr">${safe(p.endDate||'')}</td><td>${rs.length}</td><td>${es.length}</td><td>${cs.length}</td><td class="ltr">${fmt(ws?.totalWaterConsumption||0,3)}</td><td class="ltr">${money(ws?.waterUnitPrice||p.waterUnitPrice||0)}</td></tr>`;
-  }).join('');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>البيانات التاريخية</h2><p class="muted">البيانات المضمنة في النسخة الحالية — الأقدم أولًا.</p></div></div><div class="notice">هذه الصفحة للعرض والمراجعة فقط. تعديل البيانات يتم من الأقسام الأساسية.</div><div class="table-wrap"><table class="table"><thead><tr><th>من</th><th>إلى</th><th>قراءات الماء</th><th>قراءات الكهرباء</th><th>مصاريف</th><th>الاستهلاك</th><th>سعر الكوب</th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty('لا توجد بيانات تاريخية')}</td></tr>`}</tbody></table></div></section>`;
+  setTitle('البيانات التاريخية','البيانات المضمنة داخل البرنامج وحالتها الحالية.');
+  const d = (typeof INITIAL_DATA === 'object' && INITIAL_DATA) ? INITIAL_DATA : {};
+  const count = k => Array.isArray(d[k]) ? d[k].length : 0;
+  const periods = Array.isArray(d.periods) ? d.periods : [];
+  const newest = [...periods].sort((a,b)=>String(b.startDate||'').localeCompare(String(a.startDate||'')))[0];
+  $('#app').innerHTML = `
+    <section class="hero"><div><span class="guide-badge">البيانات المضمنة</span><h2>البيانات التاريخية</h2><p>هذه البيانات تأتي مع نسخة البرنامج وتستخدم فقط كبداية. البيانات الموجودة في Firebase لها الأولوية، ويمكن حذف البيانات من داخل النظام بدون أن تعود تلقائيًا بعد الحذف.</p></div></section>
+    <section class="cards-grid">
+      <div class="stat-card"><span>البنايات</span><b>${count('buildings')}</b></div>
+      <div class="stat-card"><span>السكان</span><b>${count('subscribers')}</b></div>
+      <div class="stat-card"><span>الأسابيع</span><b>${count('periods')}</b></div>
+      <div class="stat-card"><span>قراءات المياه</span><b>${count('readings')}</b></div>
+      <div class="stat-card"><span>قراءات الكهرباء</span><b>${count('energyReadings')}</b></div>
+      <div class="stat-card"><span>الخارجي</span><b>${count('waterSummary')}</b></div>
+    </section>
+    <section class="panel">
+      <div class="section-head-inline"><div><h3>آخر أسبوع مضمن</h3><p>${newest ? safe(newest.label||fmtDate(newest.startDate)) : 'لا يوجد'}</p></div><span class="badge success">جاهز</span></div>
+      <div class="notice"><b>ملاحظة:</b> البيانات المضمنة ليست نسخة من قاعدة Firebase؛ هي بيانات بداية فقط. الحذف من داخل النظام يسجل علامة حذف حتى لا تعود البيانات المحذوفة تلقائيًا.</div>
+    </section>`;
 }
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent=subtitle;$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view)); }
-function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
+function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,fund:renderFund,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
 async function navigate(view,periodId=null,force=false){if(!state.profile||state.profile.role==='pending'){renderPending();return;}state.view=view;if(periodId)state.periodId=periodId;setActiveNav();await loadData(force);render();$('#sidebar')?.classList.remove('open');}
 
 function latestPeriods(){return [...(state.data.periods||[])].sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));}
@@ -549,11 +554,13 @@ function renderSubscribers(){
   setTitle('السكان والوحدات','حدد البنايات والوحدات من اليمين، والسكان من اليسار. التعديل والحذف للمديرين فقط.');
   const rows=(state.data.subscribers||[]),buildings=state.data.buildings||[],units=state.data.units||[];
   const canManage=can('admin','manager');
+  const residentDebtTotal=rows.filter(s=>s.active!==false&&s.type!=='خارجي').reduce((sum,s)=>sum+Math.max(0,num(subscriberRow(s).debt)),0);
   $('#app').innerHTML=`<section class="grid-2">
     <div class="panel">
       <div class="panel-head"><div><h2>السكان</h2><p>بيانات الشخص الأساسية فقط. الخدمات والحسابات لها صفحات مستقلة.</p></div><div class="panel-actions"><button class="btn soft" id="exportSubs">↓ Excel</button>${canManage?'<button class="btn primary" id="addSub">+ ساكن</button>':''}</div></div>
       <div class="toolbar"><input id="subSearch" class="search" placeholder="ابحث بالاسم أو الكود أو الهاتف…"><select id="subSort" class="sort-select"><option value="code-asc">الكود تصاعدي ↑</option><option value="code-desc">الكود تنازلي ↓</option><option value="name-asc">الاسم أبجدي ↑</option><option value="name-desc">الاسم أبجدي ↓</option></select><span class="muted">${rows.filter(s=>s.active!==false).length} نشط</span></div>
       <div class="table-wrap"><table class="table" style="min-width:900px"><thead><tr><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>النوع</th><th>البناية</th><th>الوحدة</th><th>المديونية</th><th>إجراءات</th></tr></thead><tbody id="subBody">${subscriberRowsSorted(rows,'code-asc')}</tbody></table></div>
+      <div class="money-grid" style="margin-top:13px"><div class="money-card"><small>مجموع المديونية الحالية للسكان</small><b>${money(residentDebtTotal)}</b></div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><div><h2>البنايات والوحدات</h2><p>أضف أو عدّل البناية والوحدة من هنا.</p></div><div class="panel-actions"><button class="btn primary" id="addBuilding">+ بناية</button><button class="btn soft" id="addUnit">+ وحدة</button></div></div>
@@ -1062,6 +1069,226 @@ $('#settingsBtn')?.addEventListener('click',()=>navigate('settings'));
 $('#modalClose')?.addEventListener('click',closeModal);
 $('#modal')?.addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 document.addEventListener('click',e=>{const v=e.target.closest('[data-view]');if(v)navigate(v.dataset.view);const a=e.target.closest('[data-account]');if(a)openAccount(a.dataset.account);const ed=e.target.closest('[data-edit-sub]');if(ed){if(can('admin','manager'))showSubscriberForm(ed.dataset.editSub);else toast('تعديل بيانات السكان مخصص للمديرين فقط','error');}const ar=e.target.closest('[data-archive-sub]');if(ar)archiveOrDelete(ar.dataset.archiveSub);});
+
+
+
+// =========================
+// V36 — إيرادات وصندوق العمارة (سجل مالي مستقل عن السكان)
+// =========================
+const FUND_COLLECTIONS=['fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals','solarStock'];
+function fundRows(c){return state.data[c]||[];}
+function fundDateKey(v){return String(v||'').slice(0,10);}
+function fundAllRevenues(){return fundRows('fundRevenues').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
+function fundAllWithdrawals(){return fundRows('fundWithdrawals').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
+function fundRevenueTotal(){return fundRows('fundRevenues').reduce((a,x)=>a+num(x.amount),0);}
+function fundWithdrawalTotal(){return fundRows('fundWithdrawals').reduce((a,x)=>a+num(x.amount),0);}
+function fundBalance(){return fundRevenueTotal()-fundWithdrawalTotal();}
+function solarStockRow(){return fundRows('solarStock').find(x=>x.id==='main')||fundRows('solarStock')[0]||null;}
+function solarStockQty(){return Math.max(0,num(solarStockRow()?.quantity));}
+async function fundUpsert(collection,id,data){
+  if(id){await updateDoc(orgDoc(collection,id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal(collection,{id,...data});return id;}
+  const ref=doc(orgCollection(collection));await setDoc(ref,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});upsertLocal(collection,{id:ref.id,...data});return ref.id;
+}
+async function fundRemove(collection,id){await deleteDoc(orgDoc(collection,id));removeLocal(collection,id);}
+function fundActions(collection,id){
+  const edit=`<button class="btn tiny ghost" data-fund-edit="${safe(collection)}:${safe(id)}">تعديل</button>`;
+  const del=`<button class="btn tiny danger" data-fund-delete="${safe(collection)}:${safe(id)}">حذف</button>`;
+  return `<div class="row-actions">${edit}${can('admin','manager')?del:''}</div>`;
+}
+function printFundSection(sourceId,title,mode='table'){
+  const source=document.getElementById(sourceId);if(!source){toast('تعذر العثور على القسم المطلوب','error');return;}
+  const w=window.open('','_blank','width=1400,height=900');
+  if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}
+  let content='';
+  if(mode==='summary'){
+    content=`<table class="print-table"><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody>
+      <tr><td>إجمالي الإيرادات</td><td>${safe(money(fundRevenueTotal()))}</td></tr>
+      <tr><td>إجمالي السحب من الصندوق</td><td>${safe(money(fundWithdrawalTotal()))}</td></tr>
+      <tr><td>المتبقي في صندوق العمارة</td><td>${safe(money(fundBalance()))}</td></tr>
+    </tbody></table>`;
+  }else{
+    const table=source.querySelector('table');
+    if(!table){toast('تعذر العثور على جدول القسم','error');return;}
+    const clone=table.cloneNode(true);clone.querySelectorAll('[data-fund-edit],[data-fund-delete]').forEach(x=>x.remove());
+    clone.querySelectorAll('.row-actions').forEach(x=>x.remove());
+    content=clone.outerHTML;
+  }
+  w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(title)}</title><style>
+    body{font-family:Arial,"Cairo",sans-serif;padding:24px;color:#183734}h1{font-size:22px;margin:0 0 16px}.print-table{width:100%;border-collapse:collapse;direction:rtl;font-size:12px}.print-table th,.print-table td{border:1px solid #cfdad6;padding:8px 10px;text-align:center;vertical-align:middle}.print-table th{background:#edf5f2;font-weight:800}.print-table td:first-child{text-align:right}.print-table td:last-child{direction:ltr}@page{size:A4 landscape;margin:10mm}@media print{button{display:none!important}}</style></head><body><h1>${safe(title)}</h1>${content}<script>window.onload=()=>{window.print();}</script></body></html>`);
+  w.document.close();w.focus();
+}
+function renderFund(){
+  setTitle('الإيرادات وصندوق العمارة','كل الإيرادات هنا تدخل إلى صندوق العمارة فقط، ولا تُحمّل على أي ساكن ولا تدخل في حسبة المياه أو الكهرباء.');
+  if(!can('admin','manager','accountant')){
+    $('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','الإيرادات والصندوق مخصصة للإدارة والحسابات.')}</section>`;
+    return;
+  }
+  const revenues=fundAllRevenues();
+  const withdrawals=fundAllWithdrawals();
+  const totalRevenue=fundRevenueTotal();
+  const totalWithdrawals=fundWithdrawalTotal();
+  const balance=totalRevenue-totalWithdrawals;
+  const stock=solarStockRow();
+  const stockQty=solarStockQty();
+  const sales=fundRows('solarSales').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));
+  const totalSold=sales.reduce((a,x)=>a+num(x.liters),0);
+  $('#app').innerHTML=`
+    <section class="hero"><div><span class="guide-badge">حساب مستقل</span><h2>الإيرادات وصندوق العمارة</h2><p>كل إيراد مسجل هنا يدخل إلى صندوق العمارة فقط. ولا يتحول إلى مديونية على السكان ولا يدخل في حسبة المياه أو الكهرباء.</p></div></section>
+
+    <section class="panel fund-section solar-section" id="solarSection">
+      <div class="panel-head"><div><h2>مخزون السولار</h2><p>أدخل الكمية الموجودة حاليًا. عند بيع السولار تُخصم الكمية تلقائيًا ويُسجل مبلغ البيع كإيراد في جدول الإيرادات.</p></div></div>
+      <div class="solar-stock-toolbar">
+        <div class="solar-stock-box"><span>كمية السولار الحالية</span><b id="solarStockDisplay">${num(stockQty).toLocaleString('en-US',{maximumFractionDigits:3})} لتر</b></div>
+        <div class="field solar-stock-input"><label>تعديل / إدخال الكمية الحالية</label><div class="inline-action"><input id="solarStockInput" type="number" min="0" step="0.001" value="${stock?safe(stockQty):''}" placeholder="مثال 500"><button class="btn soft" id="saveSolarStock">حفظ الكمية</button></div></div>
+        <div class="solar-stock-mini"><small>إجمالي اللترات المباعة</small><b>${num(totalSold).toLocaleString('en-US',{maximumFractionDigits:3})} لتر</b></div>
+      </div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>الكمية المباعة</th><th>سعر اللتر</th><th>إجمالي البيع</th><th>المشتري</th><th>البيان</th><th>إجراءات</th></tr></thead><tbody>
+        ${sales.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td class="strong">${num(x.liters).toLocaleString('en-US',{maximumFractionDigits:3})} لتر</td><td>${money(x.pricePerLiter)}</td><td class="strong">${money(x.total)}</td><td>${safe(x.buyer||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('solarSales',x.id)}</td></tr>`).join('')||`<tr><td colspan="7">${empty('لا توجد مبيعات سولار','اضغط «بيع السولار» لتسجيل أول عملية بيع.')}</td></tr>`}
+      </tbody></table></div>
+      <div class="section-footer-actions"><button class="btn primary" id="addSolarSale">+ بيع السولار</button><button class="btn soft" id="printSolarSales">🖨 طباعة جدول مبيعات السولار</button></div>
+    </section>
+
+    <section class="panel fund-section" id="fundRevenueSection">
+      <div class="panel-head"><div><h2>إيرادات صندوق العمارة</h2><p>الإيراد لا يتوزع على السكان بأي شكل. فقط يُضاف إلى رصيد الصندوق.</p></div><div class="head-actions"><button class="btn primary" id="addFundRevenue">+ إضافة إيراد</button><button class="btn soft" id="printFundRevenues">🖨 طباعة الإيرادات</button></div></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>البيان</th><th>الملاحظات</th><th>إجراءات</th></tr></thead><tbody>
+        ${revenues.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td><span class="badge info">${safe(x.type||'—')}</span></td><td class="strong">${money(x.amount)}</td><td>${safe(x.description||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('fundRevenues',x.id)}</td></tr>`).join('')||`<tr><td colspan="6">${empty('لا توجد إيرادات مسجلة','اضغط «إضافة إيراد» لتسجيل أول إيراد.')}</td></tr>`}
+      </tbody></table></div>
+    </section>
+
+    <section class="panel fund-section" id="fundWithdrawalSection">
+      <div class="panel-head"><div><h2>السحب من صندوق العمارة</h2><p>استخدم هذا السجل عندما تدفع العمارة من الصندوق بدل تحميل المبلغ على السكان.</p></div><div class="head-actions"><button class="btn primary" id="addFundWithdrawal">+ سحب من الصندوق</button><button class="btn soft" id="printFundWithdrawals">🖨 طباعة السحب</button></div></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان / سبب السحب</th><th>الملاحظات</th><th>إجراءات</th></tr></thead><tbody>
+        ${withdrawals.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td class="strong">${money(x.amount)}</td><td>${safe(x.description||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('fundWithdrawals',x.id)}</td></tr>`).join('')||`<tr><td colspan="5">${empty('لا توجد عمليات سحب','استخدم السحب فقط عندما يتم الدفع من صندوق العمارة.')}</td></tr>`}
+      </tbody></table></div>
+    </section>
+
+    <section class="panel fund-section" id="fundSummarySection">
+      <div class="panel-head"><div><h2>ملخص الصندوق</h2><p>المعادلة: كل الإيرادات تدخل الصندوق، وكل سحب يخرج منه.</p></div><button class="btn soft" id="printFundSummary">🖨 طباعة الملخص</button></div>
+      <div class="money-grid"><div class="money-card"><small>إجمالي الإيرادات</small><b>${money(totalRevenue)}</b></div><div class="money-card"><small>إجمالي السحب</small><b>${money(totalWithdrawals)}</b></div><div class="money-card"><small>المتبقي في الصندوق</small><b>${money(balance)}</b></div></div>
+      <div class="section-note"><b>مهم:</b> هذه الصفحة مستقلة عن مصاريف السكان وحسبة المياه والكهرباء. تسجيل الإيراد هنا لا يضيف أي مديونية على أي ساكن.</div>
+    </section>`;
+  $('#saveSolarStock').onclick=async()=>{
+    const quantity=num($('#solarStockInput').value);
+    if(quantity<0){toast('الكمية لا يمكن أن تكون سالبة','error');return;}
+    const row=solarStockRow();
+    if(row) await fundUpsert('solarStock',row.id,{quantity});
+    else await fundUpsert('solarStock','main',{quantity});
+    toast('تم حفظ كمية السولار');renderFund();
+  };
+  $('#addSolarSale').onclick=()=>showSolarSaleForm();
+  $('#addFundRevenue').onclick=()=>showFundRevenueForm();
+  $('#addFundWithdrawal').onclick=()=>showFundWithdrawalForm();
+  $('#printSolarSales').onclick=()=>printFundSection('solarSection','جدول مبيعات السولار');
+  $('#printFundRevenues').onclick=()=>printFundSection('fundRevenueSection','جدول إيرادات صندوق العمارة');
+  $('#printFundWithdrawals').onclick=()=>printFundSection('fundWithdrawalSection','جدول السحب من صندوق العمارة');
+  $('#printFundSummary').onclick=()=>printFundSection('fundSummarySection','ملخص صندوق العمارة','summary');
+  $$('[data-fund-edit]').forEach(b=>b.onclick=()=>{const [c,id]=b.dataset.fundEdit.split(':');showFundFormFor(c,id);});
+  $$('[data-fund-delete]').forEach(b=>b.onclick=async()=>{const [c,id]=b.dataset.fundDelete.split(':');await deleteFundRecord(c,id);});
+}
+function showSolarSaleForm(id=null){
+  const row=id?fundRows('solarSales').find(x=>x.id===id):null;
+  const current=solarStockQty();
+  openModal(`<h2>${row?'تعديل بيع سولار':'بيع السولار'}</h2><p class="modal-lead">أدخل الكمية وسعر اللتر. البرنامج يحسب قيمة البيع، يخصم الكمية من مخزون السولار، ويضيف قيمة البيع تلقائيًا إلى إيرادات الصندوق.</p><div class="form-grid">
+    <div class="field"><label>التاريخ</label><input id="ssDate" type="date" value="${safe(row?.date||dateNow())}"></div>
+    <div class="field"><label>الكمية المباعة (لتر)</label><input id="ssLiters" type="number" min="0.001" step="0.001" value="${row?.liters??''}" placeholder="مثال 30"></div>
+    <div class="field"><label>سعر اللتر</label><input id="ssPrice" type="number" min="0.01" step="0.01" value="${row?.pricePerLiter??''}" placeholder="مثال 30"></div>
+    <div class="field"><label>المشتري (اختياري)</label><input id="ssBuyer" value="${safe(row?.buyer||'')}" placeholder="اسم المشتري"></div>
+    <div class="field full"><label>البيان / الملاحظات</label><textarea id="ssNotes" placeholder="مثال: بيع 30 لتر">${safe(row?.notes||'')}</textarea></div>
+  </div><div class="calc-preview"><span>قيمة البيع</span><b id="ssTotalPreview">${money(row?.total||0)}</b><small>الرصيد الحالي: ${num(current).toLocaleString('en-US',{maximumFractionDigits:3})} لتر</small></div><div class="actions"><button class="btn primary" id="ssSave">${row?'حفظ التعديل':'تسجيل البيع'}</button><button class="btn ghost" id="ssCancel">إلغاء</button></div>`);
+  const calc=()=>{const liters=num($('#ssLiters').value),price=num($('#ssPrice').value);$('#ssTotalPreview').textContent=money(liters*price);};
+  $('#ssLiters').oninput=calc;$('#ssPrice').oninput=calc;calc();
+  $('#ssCancel').onclick=closeModal;
+  $('#ssSave').onclick=async()=>{
+    const date=$('#ssDate').value,liters=num($('#ssLiters').value),price=num($('#ssPrice').value),buyer=$('#ssBuyer').value.trim(),notes=$('#ssNotes').value.trim();
+    if(!date||liters<=0||price<=0){toast('أكمل التاريخ والكمية وسعر اللتر','error');return;}
+    const oldLiters=row?num(row.liters):0;
+    const availableForSale=current+oldLiters;
+    if(liters>availableForSale){toast(`الكمية المتاحة للبيع ${num(availableForSale).toLocaleString('en-US',{maximumFractionDigits:3})} لتر فقط`,'error');return;}
+    const total=liters*price;
+    const saleData={date,liters,pricePerLiter:price,total,buyer,notes};
+    const revenueId=row?.revenueId||null;
+    const batch=writeBatch(db);
+    if(row){
+      batch.update(orgDoc('solarSales',id),{...saleData,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+      if(revenueId) batch.update(orgDoc('fundRevenues',revenueId),{type:'إيرادات سولار',date,amount:total,description:`بيع سولار — ${liters} لتر × ${price} ₪`,notes:buyer?`المشتري: ${buyer}${notes?' — '+notes:''}`:(notes||'') ,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+      else { const rref=doc(orgCollection('fundRevenues')); saleData.revenueId=rref.id;batch.update(orgDoc('solarSales',id),{...saleData,updatedAt:serverTimestamp(),updatedBy:state.user.uid});batch.set(rref,{type:'إيرادات سولار',date,amount:total,description:`بيع سولار — ${liters} لتر × ${price} ₪`,notes:buyer?`المشتري: ${buyer}${notes?' — '+notes:''}`:(notes||''),source:'solarSale',solarSaleId:id,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()}); }
+    }else{
+      const sref=doc(orgCollection('solarSales')),rref=doc(orgCollection('fundRevenues'));
+      batch.set(sref,{...saleData,revenueId:rref.id,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});
+      batch.set(rref,{type:'إيرادات سولار',date,amount:total,description:`بيع سولار — ${liters} لتر × ${price} ₪`,notes:buyer?`المشتري: ${buyer}${notes?' — '+notes:''}`:(notes||''),source:'solarSale',solarSaleId:sref.id,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});
+    }
+    const newQty=availableForSale-liters;
+    const stockRow=solarStockRow();
+    const stockRef=orgDoc('solarStock',stockRow?.id||'main');
+    if(stockRow) batch.update(stockRef,{quantity:newQty,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+    else batch.set(stockRef,{quantity:newQty,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});
+    await batch.commit();
+    state.loaded=false;await loadData(true);closeModal();toast(row?'تم تعديل بيع السولار وتحديث الصندوق':'تم تسجيل بيع السولار وإضافة المبلغ للصندوق');renderFund();
+  };
+}
+function showFundRevenueForm(id=null){
+  const row=id?fundRows('fundRevenues').find(x=>x.id===id):null;
+  openModal(`<h2>${row?'تعديل إيراد':'إضافة إيراد'}</h2><p class="modal-lead">الإيراد يُسجّل لصندوق العمارة فقط، ولا يُحمّل على السكان.</p><div class="form-grid">
+    <div class="field"><label>النوع</label><select id="frType"><option value="إيرادات سولار" ${row?.type==='إيرادات سولار'||!row?'selected':''}>إيرادات سولار</option><option value="إيرادات من خدمات الحارس" ${row?.type==='إيرادات من خدمات الحارس'?'selected':''}>إيرادات من خدمات الحارس</option><option value="الإيرادات الأخرى" ${row?.type==='الإيرادات الأخرى'?'selected':''}>الإيرادات الأخرى</option></select></div>
+    <div class="field"><label>التاريخ</label><input id="frDate" type="date" value="${safe(row?.date||dateNow())}"></div>
+    <div class="field"><label>المبلغ</label><input id="frAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 500"></div>
+    <div class="field full"><label>البيان</label><input id="frDesc" value="${safe(row?.description||'')}" placeholder="مثال: إيراد خدمة حارس / إيراد آخر"></div>
+    <div class="field full"><label>الملاحظات</label><textarea id="frNotes">${safe(row?.notes||'')}</textarea></div>
+  </div><div class="actions"><button class="btn primary" id="frSave">حفظ</button><button class="btn ghost" id="frCancel">إلغاء</button></div>`);
+  $('#frCancel').onclick=closeModal;
+  $('#frSave').onclick=async()=>{
+    const amount=num($('#frAmount').value),date=$('#frDate').value,description=$('#frDesc').value.trim();
+    if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
+    if(!description){toast('اكتب البيان','error');return;}
+    const data={type:$('#frType').value,date,amount,description,notes:$('#frNotes').value.trim()};
+    await fundUpsert('fundRevenues',id,data);closeModal();toast(row?'تم تعديل الإيراد':'تمت إضافة الإيراد للصندوق');renderFund();
+  };
+}
+function showFundWithdrawalForm(id=null){
+  const row=id?fundRows('fundWithdrawals').find(x=>x.id===id):null;
+  openModal(`<h2>${row?'تعديل سحب من الصندوق':'سحب من الصندوق'}</h2><p class="modal-lead">هذا السجل ينقص من رصيد صندوق العمارة فقط، حتى لا يتم تحميل المبلغ على السكان.</p><div class="form-grid">
+    <div class="field"><label>التاريخ</label><input id="fwDate" type="date" value="${safe(row?.date||dateNow())}"></div>
+    <div class="field"><label>المبلغ</label><input id="fwAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 300"></div>
+    <div class="field full"><label>البيان / سبب السحب</label><input id="fwDesc" value="${safe(row?.description||'')}" placeholder="مثال: صيانة مضخة"></div>
+    <div class="field full"><label>الملاحظات</label><textarea id="fwNotes">${safe(row?.notes||'')}</textarea></div>
+  </div><div class="actions"><button class="btn primary" id="fwSave">حفظ السحب</button><button class="btn ghost" id="fwCancel">إلغاء</button></div>`);
+  $('#fwCancel').onclick=closeModal;
+  $('#fwSave').onclick=async()=>{
+    const amount=num($('#fwAmount').value),date=$('#fwDate').value,description=$('#fwDesc').value.trim();
+    if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
+    if(!description){toast('اكتب سبب السحب / البيان','error');return;}
+    const data={date,amount,description,notes:$('#fwNotes').value.trim()};
+    await fundUpsert('fundWithdrawals',id,data);closeModal();toast(row?'تم تعديل السحب':'تم تسجيل السحب من الصندوق');renderFund();
+  };
+}
+function showFundFormFor(collection,id){
+  if(collection==='fundRevenues')showFundRevenueForm(id);
+  else if(collection==='fundWithdrawals')showFundWithdrawalForm(id);
+  else if(collection==='solarSales')showSolarSaleForm(id);
+}
+async function deleteFundRecord(collection,id){
+  if(!can('admin','manager')){toast('الحذف مخصص للمديرين فقط','error');return;}
+  const labels={fundRevenues:'الإيراد',fundWithdrawals:'السحب من الصندوق',solarSales:'عملية بيع السولار'};
+  if(!confirm(`حذف ${labels[collection]||'السجل'}؟`))return;
+  if(collection==='solarSales'){
+    const row=fundRows('solarSales').find(x=>x.id===id);if(!row)return;
+    const batch=writeBatch(db);batch.delete(orgDoc('solarSales',id));
+    if(row.revenueId)batch.delete(orgDoc('fundRevenues',row.revenueId));
+    const stockRow=solarStockRow(),stockRef=orgDoc('solarStock',stockRow?.id||'main');
+    if(stockRow)batch.update(stockRef,{quantity:solarStockQty()+num(row.liters),updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+    await batch.commit();state.loaded=false;await loadData(true);toast('تم حذف البيع وإرجاع الكمية للصهريج وتحديث الصندوق');renderFund();return;
+  }
+  if(collection==='fundRevenues'){
+    const row=fundRows('fundRevenues').find(x=>x.id===id);
+    if(row?.source==='solarSale'&&row?.solarSaleId){
+      const sale=fundRows('solarSales').find(x=>x.id===row.solarSaleId);
+      const batch=writeBatch(db);batch.delete(orgDoc('fundRevenues',id));
+      if(sale){batch.delete(orgDoc('solarSales',sale.id));const stockRow=solarStockRow(),stockRef=orgDoc('solarStock',stockRow?.id||'main');if(stockRow)batch.update(stockRef,{quantity:solarStockQty()+num(sale.liters),updatedAt:serverTimestamp(),updatedBy:state.user.uid});}
+      await batch.commit();state.loaded=false;await loadData(true);toast('تم حذف إيراد بيع السولار وإرجاع الكمية وتحديث الصندوق');renderFund();return;
+    }
+  }
+  await fundRemove(collection,id);toast('تم الحذف وتحديث رصيد الصندوق');renderFund();
+}
 
 onAuthStateChanged(auth,async user=>{state.user=user;$('#boot')?.classList.add('hidden');if(!user){$('#auth-screen')?.classList.remove('hidden');$('#app-shell')?.classList.add('hidden');return;}$('#auth-screen')?.classList.add('hidden');$('#app-shell')?.classList.remove('hidden');$('#userName').textContent=user.displayName||user.email||'المستخدم';$('#userAvatar').textContent=(user.displayName||user.email||'م').slice(0,1);$('#userRole').textContent='جارٍ التحقق…';try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role==='pending'){renderPending();return;}await loadData(true);await ensureDefaults();await navigate('dashboard');}catch(e){console.error(e);$('#app').innerHTML=`<section class="panel" style="max-width:820px;margin:40px auto"><h2>تعذر تحميل البيانات</h2><p class="muted">${safe(e?.message||'تحقق من Firestore Rules وAuthorized Domains وإعدادات Firebase.')}</p></section>`;}});
 

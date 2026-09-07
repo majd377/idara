@@ -95,3 +95,10 @@ input[type="number"], .reading-input, .ws-prev, .ws-current, .eprev, .ecur, .era
 .account-report-table th,.account-report-table td{white-space:normal!important;word-break:break-word}
 .account-modal-report .section-head-inline .row-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 @media(max-width:900px){.modal{padding:8px}.modal-card:has(.account-modal-report){padding:15px}.account-report-table{font-size:8px!important}.account-modal-report .section-head-inline{align-items:flex-start;gap:10px;flex-direction:column}.account-modal-report .section-head-inline .row-actions{width:100%}.account-modal-report .section-head-inline .row-actions .btn{flex:1}}
+
+/* V37 solar sales + fund printing */
+.head-actions,.section-footer-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.head-actions{justify-content:flex-end}
+.solar-stock-toolbar{display:grid;grid-template-columns:1fr 1.6fr .9fr;gap:12px;align-items:end;margin-bottom:14px}
+.solar-stock-box,.solar-stock-mini{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#fbfefd,#fff);padding:14px}.solar-stock-box span,.solar-stock-mini small{display:block;color:var(--muted);font-size:9px}.solar-stock-box b{display:block;margin-top:5px;font-size:23px;color:var(--primary)}.solar-stock-mini b{display:block;margin-top:5px;font-size:17px}
+.solar-stock-input label{display:block;margin-bottom:7px}.inline-action{display:flex;gap:8px}.inline-action input{flex:1;min-width:0}.calc-preview{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding:12px 14px;background:#f7faf8;border:1px solid var(--line);border-radius:14px}.calc-preview span,.calc-preview small{color:var(--muted);font-size:9px}.calc-preview b{font-size:20px;color:var(--primary)}
+@media(max-width:900px){.solar-stock-toolbar{grid-template-columns:1fr}.head-actions{justify-content:flex-start}.solar-stock-box,.solar-stock-mini{width:100%}}
