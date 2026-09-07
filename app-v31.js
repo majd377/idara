@@ -10,8 +10,8 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loaded:false,loading:false};
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
-const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts'];
-const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
+const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts','fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals'];
+const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',fund:'إيرادات وصندوق العمارة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
 const roundMoney=v=>Math.round(Number(v||0));
 const formatFinancialInteger=v=>new Intl.NumberFormat('en-US',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:true}).format(Math.round(Number(v||0)));
 const money=v=>`${formatFinancialInteger(v)} ₪`;
@@ -225,25 +225,30 @@ async function ensureDefaults(){
 }
 
 function renderHistorical(){
-  setTitle('البيانات التاريخية','عرض البيانات المضمنة من النسخة الأصلية بدون تعديل البيانات الحالية');
-  const periods=[...(state.data.periods||[])].sort((a,b)=>String(a.startDate||'').localeCompare(String(b.startDate||'')));
-  const readings=state.data.readings||[];
-  const energy=state.data.energyReadings||[];
-  const costs=state.data.costs||[];
-  const water=state.data.waterSummary||[];
-  const rows=periods.map(p=>{
-    const rs=readings.filter(r=>r.periodId===p.id);
-    const es=energy.filter(r=>r.periodId===p.id);
-    const cs=costs.filter(r=>r.periodId===p.id);
-    const ws=water.find(r=>r.periodId===p.id);
-    return `<tr><td class="ltr">${safe(p.startDate||'')}</td><td class="ltr">${safe(p.endDate||'')}</td><td>${rs.length}</td><td>${es.length}</td><td>${cs.length}</td><td class="ltr">${fmt(ws?.totalWaterConsumption||0,3)}</td><td class="ltr">${money(ws?.waterUnitPrice||p.waterUnitPrice||0)}</td></tr>`;
-  }).join('');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>البيانات التاريخية</h2><p class="muted">البيانات المضمنة في النسخة الحالية — الأقدم أولًا.</p></div></div><div class="notice">هذه الصفحة للعرض والمراجعة فقط. تعديل البيانات يتم من الأقسام الأساسية.</div><div class="table-wrap"><table class="table"><thead><tr><th>من</th><th>إلى</th><th>قراءات الماء</th><th>قراءات الكهرباء</th><th>مصاريف</th><th>الاستهلاك</th><th>سعر الكوب</th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty('لا توجد بيانات تاريخية')}</td></tr>`}</tbody></table></div></section>`;
+  setTitle('البيانات التاريخية','البيانات المضمنة داخل البرنامج وحالتها الحالية.');
+  const d = (typeof INITIAL_DATA === 'object' && INITIAL_DATA) ? INITIAL_DATA : {};
+  const count = k => Array.isArray(d[k]) ? d[k].length : 0;
+  const periods = Array.isArray(d.periods) ? d.periods : [];
+  const newest = [...periods].sort((a,b)=>String(b.startDate||'').localeCompare(String(a.startDate||'')))[0];
+  $('#app').innerHTML = `
+    <section class="hero"><div><span class="guide-badge">البيانات المضمنة</span><h2>البيانات التاريخية</h2><p>هذه البيانات تأتي مع نسخة البرنامج وتستخدم فقط كبداية. البيانات الموجودة في Firebase لها الأولوية، ويمكن حذف البيانات من داخل النظام بدون أن تعود تلقائيًا بعد الحذف.</p></div></section>
+    <section class="cards-grid">
+      <div class="stat-card"><span>البنايات</span><b>${count('buildings')}</b></div>
+      <div class="stat-card"><span>السكان</span><b>${count('subscribers')}</b></div>
+      <div class="stat-card"><span>الأسابيع</span><b>${count('periods')}</b></div>
+      <div class="stat-card"><span>قراءات المياه</span><b>${count('readings')}</b></div>
+      <div class="stat-card"><span>قراءات الكهرباء</span><b>${count('energyReadings')}</b></div>
+      <div class="stat-card"><span>الخارجي</span><b>${count('waterSummary')}</b></div>
+    </section>
+    <section class="panel">
+      <div class="section-head-inline"><div><h3>آخر أسبوع مضمن</h3><p>${newest ? safe(newest.label||fmtDate(newest.startDate)) : 'لا يوجد'}</p></div><span class="badge success">جاهز</span></div>
+      <div class="notice"><b>ملاحظة:</b> البيانات المضمنة ليست نسخة من قاعدة Firebase؛ هي بيانات بداية فقط. الحذف من داخل النظام يسجل علامة حذف حتى لا تعود البيانات المحذوفة تلقائيًا.</div>
+    </section>`;
 }
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent=subtitle;$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view)); }
-function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
+function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,fund:renderFund,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
 async function navigate(view,periodId=null,force=false){if(!state.profile||state.profile.role==='pending'){renderPending();return;}state.view=view;if(periodId)state.periodId=periodId;setActiveNav();await loadData(force);render();$('#sidebar')?.classList.remove('open');}
 
 function latestPeriods(){return [...(state.data.periods||[])].sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));}
@@ -549,11 +554,13 @@ function renderSubscribers(){
   setTitle('السكان والوحدات','حدد البنايات والوحدات من اليمين، والسكان من اليسار. التعديل والحذف للمديرين فقط.');
   const rows=(state.data.subscribers||[]),buildings=state.data.buildings||[],units=state.data.units||[];
   const canManage=can('admin','manager');
+  const residentDebtTotal=rows.filter(s=>s.active!==false&&s.type!=='خارجي').reduce((sum,s)=>sum+Math.max(0,num(subscriberRow(s).debt)),0);
   $('#app').innerHTML=`<section class="grid-2">
     <div class="panel">
       <div class="panel-head"><div><h2>السكان</h2><p>بيانات الشخص الأساسية فقط. الخدمات والحسابات لها صفحات مستقلة.</p></div><div class="panel-actions"><button class="btn soft" id="exportSubs">↓ Excel</button>${canManage?'<button class="btn primary" id="addSub">+ ساكن</button>':''}</div></div>
       <div class="toolbar"><input id="subSearch" class="search" placeholder="ابحث بالاسم أو الكود أو الهاتف…"><select id="subSort" class="sort-select"><option value="code-asc">الكود تصاعدي ↑</option><option value="code-desc">الكود تنازلي ↓</option><option value="name-asc">الاسم أبجدي ↑</option><option value="name-desc">الاسم أبجدي ↓</option></select><span class="muted">${rows.filter(s=>s.active!==false).length} نشط</span></div>
       <div class="table-wrap"><table class="table" style="min-width:900px"><thead><tr><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>النوع</th><th>البناية</th><th>الوحدة</th><th>المديونية</th><th>إجراءات</th></tr></thead><tbody id="subBody">${subscriberRowsSorted(rows,'code-asc')}</tbody></table></div>
+      <div class="money-grid" style="margin-top:13px"><div class="money-card"><small>مجموع المديونية الحالية للسكان</small><b>${money(residentDebtTotal)}</b></div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><div><h2>البنايات والوحدات</h2><p>أضف أو عدّل البناية والوحدة من هنا.</p></div><div class="panel-actions"><button class="btn primary" id="addBuilding">+ بناية</button><button class="btn soft" id="addUnit">+ وحدة</button></div></div>
@@ -1062,6 +1069,125 @@ $('#settingsBtn')?.addEventListener('click',()=>navigate('settings'));
 $('#modalClose')?.addEventListener('click',closeModal);
 $('#modal')?.addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 document.addEventListener('click',e=>{const v=e.target.closest('[data-view]');if(v)navigate(v.dataset.view);const a=e.target.closest('[data-account]');if(a)openAccount(a.dataset.account);const ed=e.target.closest('[data-edit-sub]');if(ed){if(can('admin','manager'))showSubscriberForm(ed.dataset.editSub);else toast('تعديل بيانات السكان مخصص للمديرين فقط','error');}const ar=e.target.closest('[data-archive-sub]');if(ar)archiveOrDelete(ar.dataset.archiveSub);});
+
+
+
+// =========================
+// V36 — إيرادات وصندوق العمارة (سجل مالي مستقل عن السكان)
+// =========================
+const FUND_COLLECTIONS=['fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals'];
+function fundRows(c){return state.data[c]||[];}
+function fundDateKey(v){return String(v||'').slice(0,10);}
+function fundAllRevenues(){return fundRows('fundRevenues').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
+function fundAllWithdrawals(){return fundRows('fundWithdrawals').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
+function fundRevenueTotal(){return fundRows('fundRevenues').reduce((a,x)=>a+num(x.amount),0);}
+function fundWithdrawalTotal(){return fundRows('fundWithdrawals').reduce((a,x)=>a+num(x.amount),0);}
+function fundBalance(){return fundRevenueTotal()-fundWithdrawalTotal();}
+async function fundUpsert(collection,id,data){
+  if(id){await updateDoc(orgDoc(collection,id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal(collection,{id,...data});return id;}
+  const ref=doc(orgCollection(collection));await setDoc(ref,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});upsertLocal(collection,{id:ref.id,...data});return ref.id;
+}
+async function fundRemove(collection,id){await deleteDoc(orgDoc(collection,id));removeLocal(collection,id);}
+function fundActions(collection,id){
+  const edit=`<button class="btn tiny ghost" data-fund-edit="${safe(collection)}:${safe(id)}">تعديل</button>`;
+  const del=`<button class="btn tiny danger" data-fund-delete="${safe(collection)}:${safe(id)}">حذف</button>`;
+  return `<div class="row-actions">${edit}${can('admin','manager')?del:''}</div>`;
+}
+function renderFund(){
+  setTitle('الإيرادات وصندوق العمارة','كل الإيرادات هنا تدخل إلى صندوق العمارة فقط، ولا تُحمّل على أي ساكن ولا تدخل في حسبة المياه أو الكهرباء.');
+  if(!can('admin','manager','accountant')){
+    $('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','الإيرادات والصندوق مخصصة للإدارة والحسابات.')}</section>`;
+    return;
+  }
+  const revenues=fundAllRevenues();
+  const withdrawals=fundAllWithdrawals();
+  const totalRevenue=fundRevenueTotal();
+  const totalWithdrawals=fundWithdrawalTotal();
+  const balance=totalRevenue-totalWithdrawals;
+  $('#app').innerHTML=`
+    <section class="hero">
+      <div><span class="guide-badge">حساب مستقل</span><h2>الإيرادات وصندوق العمارة</h2><p>أدخل كل إيراد يدويًا. كل مبلغ محفوظ هنا يذهب مباشرة إلى صندوق العمارة، ولا يظهر كرسوم على السكان.</p></div>
+    </section>
+
+    <section class="cards-grid fund-cards">
+      <div class="stat-card"><span>رصيد صندوق العمارة</span><b>${money(balance)}</b></div>
+      <div class="stat-card"><span>إجمالي الإيرادات</span><b>${money(totalRevenue)}</b></div>
+      <div class="stat-card"><span>إجمالي السحب من الصندوق</span><b>${money(totalWithdrawals)}</b></div>
+    </section>
+
+    <section class="panel fund-section">
+      <div class="panel-head"><div><h2>إيرادات صندوق العمارة</h2><p>الإيراد لا يتوزع على السكان بأي شكل. فقط يُضاف إلى رصيد الصندوق.</p></div><button class="btn primary" id="addFundRevenue">+ إضافة إيراد</button></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>البيان</th><th>الملاحظات</th><th>إجراءات</th></tr></thead><tbody>
+        ${revenues.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td><span class="badge info">${safe(x.type||'—')}</span></td><td class="strong">${money(x.amount)}</td><td>${safe(x.description||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('fundRevenues',x.id)}</td></tr>`).join('')||`<tr><td colspan="6">${empty('لا توجد إيرادات مسجلة','اضغط «إضافة إيراد» لتسجيل أول إيراد.')}</td></tr>`}
+      </tbody></table></div>
+    </section>
+
+    <section class="panel fund-section">
+      <div class="panel-head"><div><h2>السحب من صندوق العمارة</h2><p>استخدم هذا السجل عندما تدفع العمارة من الصندوق بدل تحميل المبلغ على السكان.</p></div><button class="btn primary" id="addFundWithdrawal">+ سحب من الصندوق</button></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان / سبب السحب</th><th>الملاحظات</th><th>إجراءات</th></tr></thead><tbody>
+        ${withdrawals.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td class="strong">${money(x.amount)}</td><td>${safe(x.description||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('fundWithdrawals',x.id)}</td></tr>`).join('')||`<tr><td colspan="5">${empty('لا توجد عمليات سحب','استخدم السحب فقط عندما يتم الدفع من صندوق العمارة.')}</td></tr>`}
+      </tbody></table></div>
+    </section>
+
+    <section class="panel fund-section">
+      <div class="panel-head"><div><h2>ملخص الصندوق</h2><p>المعادلة بسيطة: كل الإيرادات تدخل الصندوق، وكل سحب يخرج منه.</p></div></div>
+      <div class="money-grid">
+        <div class="money-card"><small>إجمالي الإيرادات</small><b>${money(totalRevenue)}</b></div>
+        <div class="money-card"><small>إجمالي السحب</small><b>${money(totalWithdrawals)}</b></div>
+        <div class="money-card"><small>المتبقي في الصندوق</small><b>${money(balance)}</b></div>
+      </div>
+      <div class="section-note"><b>مهم:</b> هذه الصفحة مستقلة عن مصاريف السكان وحسبة المياه والكهرباء. تسجيل الإيراد هنا لا يضيف أي مديونية على أي ساكن.</div>
+    </section>`;
+  $('#addFundRevenue').onclick=()=>showFundRevenueForm();
+  $('#addFundWithdrawal').onclick=()=>showFundWithdrawalForm();
+  $$('[data-fund-edit]').forEach(b=>b.onclick=()=>{const [c,id]=b.dataset.fundEdit.split(':');showFundFormFor(c,id);});
+  $$('[data-fund-delete]').forEach(b=>b.onclick=async()=>{const [c,id]=b.dataset.fundDelete.split(':');await deleteFundRecord(c,id);});
+}
+function showFundRevenueForm(id=null){
+  const row=id?fundRows('fundRevenues').find(x=>x.id===id):null;
+  openModal(`<h2>${row?'تعديل إيراد':'إضافة إيراد'}</h2><p class="modal-lead">الإيراد يُسجّل لصندوق العمارة فقط، ولا يُحمّل على السكان.</p><div class="form-grid">
+    <div class="field"><label>النوع</label><select id="frType"><option value="إيرادات سولار" ${row?.type==='إيرادات سولار'||!row?'selected':''}>إيرادات سولار</option><option value="إيرادات من خدمات الحارس" ${row?.type==='إيرادات من خدمات الحارس'?'selected':''}>إيرادات من خدمات الحارس</option><option value="الإيرادات الأخرى" ${row?.type==='الإيرادات الأخرى'?'selected':''}>الإيرادات الأخرى</option></select></div>
+    <div class="field"><label>التاريخ</label><input id="frDate" type="date" value="${safe(row?.date||dateNow())}"></div>
+    <div class="field"><label>المبلغ</label><input id="frAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 500"></div>
+    <div class="field full"><label>البيان</label><input id="frDesc" value="${safe(row?.description||'')}" placeholder="مثال: بيع سولار / إيراد خدمة حارس / إيراد آخر"></div>
+    <div class="field full"><label>الملاحظات</label><textarea id="frNotes">${safe(row?.notes||'')}</textarea></div>
+  </div><div class="actions"><button class="btn primary" id="frSave">حفظ</button><button class="btn ghost" id="frCancel">إلغاء</button></div>`);
+  $('#frCancel').onclick=closeModal;
+  $('#frSave').onclick=async()=>{
+    const amount=num($('#frAmount').value),date=$('#frDate').value,description=$('#frDesc').value.trim();
+    if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
+    if(!description){toast('اكتب البيان','error');return;}
+    const data={type:$('#frType').value,date,amount,description,notes:$('#frNotes').value.trim()};
+    await fundUpsert('fundRevenues',id,data);closeModal();toast(row?'تم تعديل الإيراد':'تمت إضافة الإيراد للصندوق');renderFund();
+  };
+}
+function showFundWithdrawalForm(id=null){
+  const row=id?fundRows('fundWithdrawals').find(x=>x.id===id):null;
+  openModal(`<h2>${row?'تعديل سحب من الصندوق':'سحب من الصندوق'}</h2><p class="modal-lead">هذا السجل ينقص من رصيد صندوق العمارة فقط، حتى لا يتم تحميل المبلغ على السكان.</p><div class="form-grid">
+    <div class="field"><label>التاريخ</label><input id="fwDate" type="date" value="${safe(row?.date||dateNow())}"></div>
+    <div class="field"><label>المبلغ</label><input id="fwAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 300"></div>
+    <div class="field full"><label>البيان / سبب السحب</label><input id="fwDesc" value="${safe(row?.description||'')}" placeholder="مثال: صيانة مضخة"></div>
+    <div class="field full"><label>الملاحظات</label><textarea id="fwNotes">${safe(row?.notes||'')}</textarea></div>
+  </div><div class="actions"><button class="btn primary" id="fwSave">حفظ السحب</button><button class="btn ghost" id="fwCancel">إلغاء</button></div>`);
+  $('#fwCancel').onclick=closeModal;
+  $('#fwSave').onclick=async()=>{
+    const amount=num($('#fwAmount').value),date=$('#fwDate').value,description=$('#fwDesc').value.trim();
+    if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
+    if(!description){toast('اكتب سبب السحب / البيان','error');return;}
+    const data={date,amount,description,notes:$('#fwNotes').value.trim()};
+    await fundUpsert('fundWithdrawals',id,data);closeModal();toast(row?'تم تعديل السحب':'تم تسجيل السحب من الصندوق');renderFund();
+  };
+}
+function showFundFormFor(collection,id){
+  if(collection==='fundRevenues')showFundRevenueForm(id);
+  else if(collection==='fundWithdrawals')showFundWithdrawalForm(id);
+}
+async function deleteFundRecord(collection,id){
+  if(!can('admin','manager')){toast('الحذف مخصص للمديرين فقط','error');return;}
+  const labels={fundRevenues:'الإيراد',fundWithdrawals:'السحب من الصندوق'};
+  if(!confirm(`حذف ${labels[collection]||'السجل'}؟`))return;
+  await fundRemove(collection,id);toast('تم الحذف وتحديث رصيد الصندوق');renderFund();
+}
 
 onAuthStateChanged(auth,async user=>{state.user=user;$('#boot')?.classList.add('hidden');if(!user){$('#auth-screen')?.classList.remove('hidden');$('#app-shell')?.classList.add('hidden');return;}$('#auth-screen')?.classList.add('hidden');$('#app-shell')?.classList.remove('hidden');$('#userName').textContent=user.displayName||user.email||'المستخدم';$('#userAvatar').textContent=(user.displayName||user.email||'م').slice(0,1);$('#userRole').textContent='جارٍ التحقق…';try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role==='pending'){renderPending();return;}await loadData(true);await ensureDefaults();await navigate('dashboard');}catch(e){console.error(e);$('#app').innerHTML=`<section class="panel" style="max-width:820px;margin:40px auto"><h2>تعذر تحميل البيانات</h2><p class="muted">${safe(e?.message||'تحقق من Firestore Rules وAuthorized Domains وإعدادات Firebase.')}</p></section>`;}});
 
