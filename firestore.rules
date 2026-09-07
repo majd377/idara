@@ -2,31 +2,38 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function adminEmail() { return signedIn() && request.auth.token.email == 'mjdshbyr449@gmail.com'; }
+    function ownerEmail() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['mjdshbyr449@gmail.com', 'eng.khaledshbair@gmail.com'];
+    }
     function member(orgId) { return signedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)); }
     function role(orgId) { return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role; }
     function staff(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']; }
     function writer(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator']; }
-    function manager(orgId) { return member(orgId) && role(orgId) in ['admin','manager']; }
+    function manager(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager']); }
 
     match /organizations/{orgId} {
       match /members/{uid} {
-        allow read: if (signedIn() && uid == request.auth.uid) || staff(orgId);
+        allow get: if signedIn() && (uid == request.auth.uid || staff(orgId) || ownerEmail());
+        allow list: if staff(orgId) || ownerEmail();
         allow create: if signedIn() && uid == request.auth.uid && !exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(uid))
-          && ((adminEmail() && request.resource.data.role == 'admin') || (!adminEmail() && request.resource.data.role == 'pending'));
-        allow update: if manager(orgId) || (signedIn() && uid == request.auth.uid && request.resource.data.role == resource.data.role);
+          && ((ownerEmail() && orgId == 'amin-main' && request.resource.data.role == 'admin') || (!ownerEmail() && request.resource.data.role == 'pending'));
+        allow update: if manager(orgId)
+          || (signedIn() && uid == request.auth.uid && request.resource.data.role == resource.data.role);
         allow delete: if manager(orgId) && uid != request.auth.uid;
       }
 
       match /meta/{docId} {
-        allow read: if staff(orgId);
-        allow create: if adminEmail() && docId == 'setup' && !exists(/databases/$(database)/documents/organizations/$(orgId)/meta/setup);
+        allow read: if staff(orgId) || ownerEmail();
+        allow create: if ownerEmail() && orgId == 'amin-main' && docId == 'setup' && !exists(/databases/$(database)/documents/organizations/$(orgId)/meta/setup);
         allow update, delete: if manager(orgId);
       }
 
       match /{collectionId}/{docId} {
-        allow read: if staff(orgId);
-        allow create, update: if writer(orgId);
+        allow read: if staff(orgId) || ownerEmail();
+        allow create, update: if manager(orgId) || (writer(orgId) && !(collectionId in ['subscribers']));
         allow delete: if manager(orgId);
       }
     }
