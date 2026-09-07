@@ -225,25 +225,20 @@ async function ensureDefaults(){
 }
 
 function renderHistorical(){
-  setTitle('البيانات التاريخية','البيانات المضمنة داخل البرنامج وحالتها الحالية.');
-  const d = (typeof INITIAL_DATA === 'object' && INITIAL_DATA) ? INITIAL_DATA : {};
-  const count = k => Array.isArray(d[k]) ? d[k].length : 0;
-  const periods = Array.isArray(d.periods) ? d.periods : [];
-  const newest = [...periods].sort((a,b)=>String(b.startDate||'').localeCompare(String(a.startDate||'')))[0];
-  $('#app').innerHTML = `
-    <section class="hero"><div><span class="guide-badge">البيانات المضمنة</span><h2>البيانات التاريخية</h2><p>هذه البيانات تأتي مع نسخة البرنامج وتستخدم فقط كبداية. البيانات الموجودة في Firebase لها الأولوية، ويمكن حذف البيانات من داخل النظام بدون أن تعود تلقائيًا بعد الحذف.</p></div></section>
-    <section class="cards-grid">
-      <div class="stat-card"><span>البنايات</span><b>${count('buildings')}</b></div>
-      <div class="stat-card"><span>السكان</span><b>${count('subscribers')}</b></div>
-      <div class="stat-card"><span>الأسابيع</span><b>${count('periods')}</b></div>
-      <div class="stat-card"><span>قراءات المياه</span><b>${count('readings')}</b></div>
-      <div class="stat-card"><span>قراءات الكهرباء</span><b>${count('energyReadings')}</b></div>
-      <div class="stat-card"><span>الخارجي</span><b>${count('waterSummary')}</b></div>
-    </section>
-    <section class="panel">
-      <div class="section-head-inline"><div><h3>آخر أسبوع مضمن</h3><p>${newest ? safe(newest.label||fmtDate(newest.startDate)) : 'لا يوجد'}</p></div><span class="badge success">جاهز</span></div>
-      <div class="notice"><b>ملاحظة:</b> البيانات المضمنة ليست نسخة من قاعدة Firebase؛ هي بيانات بداية فقط. الحذف من داخل النظام يسجل علامة حذف حتى لا تعود البيانات المحذوفة تلقائيًا.</div>
-    </section>`;
+  setTitle('البيانات التاريخية','عرض البيانات المضمنة من النسخة الأصلية بدون تعديل البيانات الحالية');
+  const periods=[...(state.data.periods||[])].sort((a,b)=>String(a.startDate||'').localeCompare(String(b.startDate||'')));
+  const readings=state.data.readings||[];
+  const energy=state.data.energyReadings||[];
+  const costs=state.data.costs||[];
+  const water=state.data.waterSummary||[];
+  const rows=periods.map(p=>{
+    const rs=readings.filter(r=>r.periodId===p.id);
+    const es=energy.filter(r=>r.periodId===p.id);
+    const cs=costs.filter(r=>r.periodId===p.id);
+    const ws=water.find(r=>r.periodId===p.id);
+    return `<tr><td class="ltr">${safe(p.startDate||'')}</td><td class="ltr">${safe(p.endDate||'')}</td><td>${rs.length}</td><td>${es.length}</td><td>${cs.length}</td><td class="ltr">${fmt(ws?.totalWaterConsumption||0,3)}</td><td class="ltr">${money(ws?.waterUnitPrice||p.waterUnitPrice||0)}</td></tr>`;
+  }).join('');
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>البيانات التاريخية</h2><p class="muted">البيانات المضمنة في النسخة الحالية — الأقدم أولًا.</p></div></div><div class="notice">هذه الصفحة للعرض والمراجعة فقط. تعديل البيانات يتم من الأقسام الأساسية.</div><div class="table-wrap"><table class="table"><thead><tr><th>من</th><th>إلى</th><th>قراءات الماء</th><th>قراءات الكهرباء</th><th>مصاريف</th><th>الاستهلاك</th><th>سعر الكوب</th></tr></thead><tbody>${rows||`<tr><td colspan="7">${empty('لا توجد بيانات تاريخية')}</td></tr>`}</tbody></table></div></section>`;
 }
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent=subtitle;$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
@@ -1050,7 +1045,7 @@ function showGuide(){
     {title:'سابعًا: خدمة الحارس',text:'من «خدمة الحارس» اكتب المبلغ على الشخص الواحد، وأزل علامة الدفع عن أي ساكن لا يدفع الحارس. البرنامج يحسب العدد والإجمالي تلقائيًا.',demo:'money',go:'guard'},
     {title:'ثامنًا: نزّل Excel',text:'من «التقارير والتصدير» اختر التقرير المطلوب واضغط «تنزيل Excel».',demo:'excel',go:'reports'}
   ];let i=0;const draw=()=>{const s=steps[i];let demo='';if(s.demo==='water')demo='<div class="demo-card-grid"><div class="demo-card"><small>السابقة</small><b>125000</b></div><div class="demo-card"><small>الحالية</small><b>126500</b></div><div class="demo-card"><small>السحب</small><b>1.500 كوب</b></div></div>';else if(s.demo==='energy')demo='<div class="demo-card-grid"><div class="demo-card"><small>أبو زايد — السابقة</small><b>1520</b></div><div class="demo-card"><small>الحالية</small><b>1548</b></div><div class="demo-card"><small>التكلفة</small><b>28 × السعر</b></div></div>';else if(s.demo==='cost')demo='<div class="demo-card-grid"><div class="demo-card"><small>مولد خارجي</small><b>استئجار</b></div><div class="demo-card"><small>سولار</small><b>وقود</b></div><div class="demo-card"><small>طارئ</small><b>صيانة</b></div></div>';else if(s.demo==='calc')demo='<div class="demo-card-grid"><div class="demo-card"><small>البناية 1</small><b>xx.xxx</b></div><div class="demo-card"><small>البناية 2</small><b>xx.xxx</b></div><div class="demo-card"><small>الخارجي</small><b>xx.xxx</b></div></div>';else if(s.demo==='excel')demo='<div class="demo-row"><span>تقرير قراءات</span><b>↓ تنزيل Excel</b></div><div class="demo-row"><span>ملخص الحساب</span><b>↓ تنزيل Excel</b></div>';else demo='<div class="demo-row"><span>الرصيد</span><b>325.00 ₪</b></div><div class="demo-row"><span>دفعة</span><b>−100.00 ₪</b></div>';openModal(`<div class="guide-hero"><div class="guide-topline"><span class="guide-badge">شرح عملي</span><span class="guide-counter">${i+1} / ${steps.length}</span></div><h2>${s.title}</h2><p>${s.text}</p></div><div class="guide-demo"><div class="demo-title">هكذا ستراه داخل الموقع</div>${demo}</div><div class="guide-actions"><button class="btn ghost" id="guideClose">إغلاق</button><div class="guide-actions-right"><button class="btn ghost" id="guidePrev" ${i===0?'disabled':''}>السابق</button><button class="btn primary" id="guideDo">اذهب لهذه الخطوة →</button></div></div>`);$('#guideClose').onclick=closeModal;$('#guidePrev').onclick=()=>{if(i>0){i--;draw();}};$('#guideDo').onclick=()=>{closeModal();navigate(s.go);};};draw();}
-function renderPending(){setTitle('بانتظار الموافقة','حسابك معروف، لكن المدير لم يمنحك صلاحية بعد.');$('#app').innerHTML=`<section class="panel" style="max-width:680px;margin:50px auto;text-align:center;padding:40px"><div style="font-size:40px">⌛</div><h2>باقي موافقة المدير</h2><p class="muted">${safe(state.user?.email||'حسابك')} مسجل. بعد موافقة المدير ستظهر بيانات العمارة.</p><button class="btn primary" id="reloadPending">تحديث</button></section>`;$('#reloadPending').onclick=async()=>{try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);$('#fundNav')?.classList.toggle('hidden',!['admin','manager','accountant','operator','viewer'].includes(state.profile.role));if(state.profile.role!=='pending'){await loadData(true);await ensureDefaults();await navigate('dashboard');}else toast('ما زال الحساب بانتظار موافقة المدير','error');}catch(e){toast(e?.message||'تعذر تحديث حالة الحساب','error');}};}
+function renderPending(){setTitle('بانتظار الموافقة','حسابك معروف، لكن المدير لم يمنحك صلاحية بعد.');$('#app').innerHTML=`<section class="panel" style="max-width:680px;margin:50px auto;text-align:center;padding:40px"><div style="font-size:40px">⌛</div><h2>باقي موافقة المدير</h2><p class="muted">${safe(state.user?.email||'حسابك')} مسجل. بعد موافقة المدير ستظهر بيانات العمارة.</p><button class="btn primary" id="reloadPending">تحديث</button></section>`;$('#reloadPending').onclick=async()=>{try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role!=='pending'){await loadData(true);await ensureDefaults();await navigate('dashboard');}else toast('ما زال الحساب بانتظار موافقة المدير','error');}catch(e){toast(e?.message||'تعذر تحديث حالة الحساب','error');}};}
 
 // Global actions
 function authFriendlyError(e){ const c=e?.code||''; const m={ 'auth/unauthorized-domain':'الدومين غير مصرح به في Firebase. أضف majd377.github.io إلى Authorized domains.','auth/operation-not-allowed':'تسجيل الدخول بحساب Google غير مفعّل في Firebase.','auth/network-request-failed':'تعذر الاتصال بـ Firebase. تحقق من الإنترنت ثم حاول مرة أخرى.','auth/popup-blocked':'تم حظر نافذة تسجيل الدخول.','auth/popup-closed-by-user':'تم إغلاق نافذة تسجيل الدخول قبل إكمال العملية.'}; return m[c]||'';}
@@ -1068,7 +1063,7 @@ $('#modalClose')?.addEventListener('click',closeModal);
 $('#modal')?.addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 document.addEventListener('click',e=>{const v=e.target.closest('[data-view]');if(v)navigate(v.dataset.view);const a=e.target.closest('[data-account]');if(a)openAccount(a.dataset.account);const ed=e.target.closest('[data-edit-sub]');if(ed){if(can('admin','manager'))showSubscriberForm(ed.dataset.editSub);else toast('تعديل بيانات السكان مخصص للمديرين فقط','error');}const ar=e.target.closest('[data-archive-sub]');if(ar)archiveOrDelete(ar.dataset.archiveSub);});
 
-onAuthStateChanged(auth,async user=>{state.user=user;$('#boot')?.classList.add('hidden');if(!user){$('#auth-screen')?.classList.remove('hidden');$('#app-shell')?.classList.add('hidden');return;}$('#auth-screen')?.classList.add('hidden');$('#app-shell')?.classList.remove('hidden');$('#userName').textContent=user.displayName||user.email||'المستخدم';$('#userAvatar').textContent=(user.displayName||user.email||'م').slice(0,1);$('#userRole').textContent='جارٍ التحقق…';try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);$('#fundNav')?.classList.toggle('hidden',!['admin','manager','accountant','operator','viewer'].includes(state.profile.role));if(state.profile.role==='pending'){renderPending();return;}await loadData(true);await ensureDefaults();await navigate('dashboard');}catch(e){console.error(e);$('#app').innerHTML=`<section class="panel" style="max-width:820px;margin:40px auto"><h2>تعذر تحميل البيانات</h2><p class="muted">${safe(e?.message||'تحقق من Firestore Rules وAuthorized Domains وإعدادات Firebase.')}</p></section>`;}});
+onAuthStateChanged(auth,async user=>{state.user=user;$('#boot')?.classList.add('hidden');if(!user){$('#auth-screen')?.classList.remove('hidden');$('#app-shell')?.classList.add('hidden');return;}$('#auth-screen')?.classList.add('hidden');$('#app-shell')?.classList.remove('hidden');$('#userName').textContent=user.displayName||user.email||'المستخدم';$('#userAvatar').textContent=(user.displayName||user.email||'م').slice(0,1);$('#userRole').textContent='جارٍ التحقق…';try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role==='pending'){renderPending();return;}await loadData(true);await ensureDefaults();await navigate('dashboard');}catch(e){console.error(e);$('#app').innerHTML=`<section class="panel" style="max-width:820px;margin:40px auto"><h2>تعذر تحميل البيانات</h2><p class="muted">${safe(e?.message||'تحقق من Firestore Rules وAuthorized Domains وإعدادات Firebase.')}</p></section>`;}});
 
 async function deletePayment(id){if(!can('admin','manager')){toast('الحذف مخصص للمديرين','error');return;}const p=(state.data.payments||[]).find(x=>x.id===id);if(!p)return;if(!confirm(`حذف الدفعة بمبلغ ${money(p.amount)}؟`))return;const ops=[b=>b.delete(orgDoc('payments',id))];for(const l of (state.data.ledger||[]).filter(x=>x.referenceId===id&&x.transactionType==='PAYMENT'))ops.push(b=>b.delete(orgDoc('ledger',l.id)));await commitOps(ops);state.loaded=false;await loadData(true);toast('تم حذف الدفعة');renderPayments();}
 
