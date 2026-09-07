@@ -224,6 +224,28 @@ async function ensureDefaults(){
   }
 }
 
+function renderHistorical(){
+  setTitle('البيانات التاريخية','البيانات المضمنة داخل البرنامج وحالتها الحالية.');
+  const d = (typeof INITIAL_DATA === 'object' && INITIAL_DATA) ? INITIAL_DATA : {};
+  const count = k => Array.isArray(d[k]) ? d[k].length : 0;
+  const periods = Array.isArray(d.periods) ? d.periods : [];
+  const newest = [...periods].sort((a,b)=>String(b.startDate||'').localeCompare(String(a.startDate||'')))[0];
+  $('#app').innerHTML = `
+    <section class="hero"><div><span class="guide-badge">البيانات المضمنة</span><h2>البيانات التاريخية</h2><p>هذه البيانات تأتي مع نسخة البرنامج وتستخدم فقط كبداية. البيانات الموجودة في Firebase لها الأولوية، ويمكن حذف البيانات من داخل النظام بدون أن تعود تلقائيًا بعد الحذف.</p></div></section>
+    <section class="cards-grid">
+      <div class="stat-card"><span>البنايات</span><b>${count('buildings')}</b></div>
+      <div class="stat-card"><span>السكان</span><b>${count('subscribers')}</b></div>
+      <div class="stat-card"><span>الأسابيع</span><b>${count('periods')}</b></div>
+      <div class="stat-card"><span>قراءات المياه</span><b>${count('readings')}</b></div>
+      <div class="stat-card"><span>قراءات الكهرباء</span><b>${count('energyReadings')}</b></div>
+      <div class="stat-card"><span>الخارجي</span><b>${count('waterSummary')}</b></div>
+    </section>
+    <section class="panel">
+      <div class="section-head-inline"><div><h3>آخر أسبوع مضمن</h3><p>${newest ? safe(newest.label||fmtDate(newest.startDate)) : 'لا يوجد'}</p></div><span class="badge success">جاهز</span></div>
+      <div class="notice"><b>ملاحظة:</b> البيانات المضمنة ليست نسخة من قاعدة Firebase؛ هي بيانات بداية فقط. الحذف من داخل النظام يسجل علامة حذف حتى لا تعود البيانات المحذوفة تلقائيًا.</div>
+    </section>`;
+}
+
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent=subtitle;$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view)); }
 function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
