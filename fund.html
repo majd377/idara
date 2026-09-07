@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#123f3a">
+  <title>صندوق العمارة والإيرادات — عمارة الأمين</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./fund-v1.css?v=1.0">
+</head>
+<body>
+  <div id="boot" class="boot"><div class="boot-card"><div class="brand-logo">أ</div><h1>عمارة الأمين</h1><p>جاري فتح صندوق العمارة…</p></div></div>
+
+  <div id="auth-screen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="brand-lockup"><div class="brand-logo">أ</div><div><b>عمارة الأمين</b><span>الإيرادات وصندوق العمارة</span></div></div>
+      <div class="auth-chip">● تسجيل دخول آمن</div>
+      <h1>أهلاً وسهلاً</h1>
+      <p>سجّل الدخول بحساب Google المصرح له لإدارة صندوق العمارة.</p>
+      <button id="googleLogin" class="google-btn"><span>G</span><span>الدخول باستخدام Google</span></button>
+      <div id="auth-error" class="alert danger hidden"></div>
+    </div>
+  </div>
+
+  <main id="app-shell" class="shell hidden">
+    <header class="topbar">
+      <div class="head-left">
+        <a class="back-link" href="./index.html">← إدارة الحسابات</a>
+        <div class="brand-lockup"><div class="brand-logo small">أ</div><div><b>صندوق العمارة</b><span>الإيرادات والمصروفات المستقلة</span></div></div>
+      </div>
+      <div class="head-actions">
+        <span id="userName" class="user-pill">—</span>
+        <button class="btn ghost" id="refreshBtn">↻ تحديث</button>
+        <button class="btn ghost" id="logoutBtn">تسجيل الخروج</button>
+      </div>
+    </header>
+
+    <section class="page-head">
+      <div><div class="eyebrow">عمارة الأمين · الماليات المستقلة</div><h1>الإيرادات وصندوق العمارة</h1><p>إدارة خدمة الحارس والسولار والصندوق، بشكل مستقل عن حسبة المياه.</p></div>
+      <div class="month-picker"><label>الشهر المعروض</label><input id="monthPicker" type="month"></div>
+    </section>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="dashboard">نظرة عامة</button>
+      <button class="tab" data-tab="guard">خدمة الحارس</button>
+      <button class="tab" data-tab="solar">السولار</button>
+      <button class="tab" data-tab="fund">صندوق العمارة</button>
+      <button class="tab" data-tab="other">إيرادات أخرى</button>
+      <button class="tab" data-tab="reports">التقارير</button>
+    </nav>
+
+    <section id="content"></section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="modal" class="modal hidden"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
+
+  <script type="module" src="./fund-v1.js?v=1.0"></script>
+</body>
+</html>

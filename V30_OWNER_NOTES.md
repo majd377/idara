@@ -1,0 +1,1 @@
+V30 adds a second root owner: eng.khaledshbair@gmail.com. Both owners are admin at bootstrap. Rules use verified Google email, and the app upgrades an existing owner profile to admin automatically.
