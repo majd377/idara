@@ -31,6 +31,7 @@ function can(...roles){return roles.includes(state.profile?.role);}
 function statusBadge(s){const map={Draft:['مسودة','warn'],Calculated:['محسوبة','info'],Approved:['معتمدة','ok'],Closed:['مغلقة','ok'],Pending:['بانتظار','warn'],Entered:['مدخلة','ok'],Invalid:['غير صالحة','danger']};const x=map[s]||['—','info'];return `<span class="badge ${x[1]}">${x[0]}</span>`;}
 function statusText(s){return ({Draft:'مسودة',Calculated:'محسوبة',Approved:'معتمدة',Closed:'مغلقة',Pending:'بانتظار',Entered:'مدخلة',Invalid:'غير صالحة'}[s]||s||'—');}
 function empty(title,text=''){return `<div class="empty"><strong>${safe(title)}</strong><span>${safe(text)}</span></div>`;}
+function header(title,desc='',actions=''){return `<div class="panel-head"><div><h2>${safe(title)}</h2>${desc?`<p>${safe(desc)}</p>`:''}</div>${actions?`<div class="panel-actions">${actions}</div>`:''}</div>`;}
 function buildingName(id){return state.data.buildings?.find(b=>b.id===id)?.name||'—';}
 function unitForSub(s){return state.data.units?.find(u=>u.id===s?.unitId);}
 function subscriberByMeter(m){return state.data.subscribers?.find(s=>s.id===m?.subscriberId);}
