@@ -31,9 +31,27 @@ function can(...roles){return roles.includes(state.profile?.role);}
 function statusBadge(s){const map={Draft:['مسودة','warn'],Calculated:['محسوبة','info'],Approved:['معتمدة','ok'],Closed:['مغلقة','ok'],Pending:['بانتظار','warn'],Entered:['مدخلة','ok'],Invalid:['غير صالحة','danger']};const x=map[s]||['—','info'];return `<span class="badge ${x[1]}">${x[0]}</span>`;}
 function statusText(s){return ({Draft:'مسودة',Calculated:'محسوبة',Approved:'معتمدة',Closed:'مغلقة',Pending:'بانتظار',Entered:'مدخلة',Invalid:'غير صالحة'}[s]||s||'—');}
 function empty(title,text=''){return `<div class="empty"><strong>${safe(title)}</strong><span>${safe(text)}</span></div>`;}
-function buildingName(id){return state.data.buildings?.find(b=>b.id===id)?.name||'—';}
-function unitForSub(s){return state.data.units?.find(u=>u.id===s?.unitId);}
-function subscriberByMeter(m){return state.data.subscribers?.find(s=>s.id===m?.subscriberId);}
+function sameId(a,b){return a!=null&&b!=null&&String(a)===String(b);}
+function findBuildingRef(ref){
+  const v=String(ref??'').trim(); if(!v) return null;
+  return (state.data.buildings||[]).find(b=>sameId(b.id,v)||String(b.code??'').trim()===v||String(b.name??'').trim()===v)||null;
+}
+function findUnitRef(ref,buildingRef=null){
+  const v=String(ref??'').trim(); if(!v) return null;
+  const rows=(state.data.units||[]).filter(u=>sameId(u.id,v)||String(u.code??'').trim()===v||String(u.unitNumber??'').trim()===v);
+  if(buildingRef){
+    const bid=String(buildingRef.id??buildingRef).trim();
+    return rows.find(u=>sameId(u.buildingId,bid)||String(u.buildingId??'').trim()===bid||findBuildingRef(u.buildingId)?.id===bid)||rows[0]||null;
+  }
+  return rows.length===1?rows[0]:rows.find(u=>sameId(u.id,v))||null;
+}
+function buildingName(id){return findBuildingRef(id)?.name||'—';}
+function unitForSub(s){
+  const direct=(state.data.units||[]).find(u=>sameId(u.id,s?.unitId));
+  if(direct) return direct;
+  return findUnitRef(s?.unitId,s?.buildingId||null);
+}
+function subscriberByMeter(m){return (state.data.subscribers||[]).find(s=>sameId(s.id,m?.subscriberId));}
 function transactionDate(x){
   if(x?.paymentDate) return String(x.paymentDate).slice(0,10);
   if(x?.date) return String(x.date).slice(0,10);
@@ -64,8 +82,58 @@ async function loadData(force=false){
   if(state.loaded&&!force)return;
   if(state.loading)return;
   state.loading=true;
-  try{const results=await Promise.all(COLLECTIONS.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));for(const [c,rows] of results)state.data[c]=rows;state.loaded=true;}
-  finally{state.loading=false;}
+  try{
+    const results=await Promise.all(COLLECTIONS.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));
+    for(const [c,rows] of results)state.data[c]=rows;
+    state.loaded=true;
+    await repairEntityLinks();
+  } finally{state.loading=false;}
+}
+
+async function repairEntityLinks(){
+  // Repair legacy/new records whose references contain a code/name instead of the Firestore document ID.
+  // Only managers/admins write repairs so read-only users are never blocked by this migration.
+  if(!can('admin','manager')) return;
+  const ops=[];
+  const buildings=state.data.buildings||[], units=state.data.units||[], subs=state.data.subscribers||[], meters=state.data.meters||[];
+  for(const u of units){
+    const b=findBuildingRef(u.buildingId);
+    if(b && !sameId(u.buildingId,b.id)) ops.push(batch=>batch.update(orgDoc('units',u.id),{buildingId:b.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid}));
+  }
+  for(const sub of subs){
+    if(sub.type==='خارجي') continue;
+    const direct=(units||[]).find(u=>sameId(u.id,sub.unitId));
+    const unit=direct||findUnitRef(sub.unitId,sub.buildingId||null);
+    if(unit){
+      const b=findBuildingRef(unit.buildingId);
+      const patch={unitId:unit.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid};
+      if(b && !sameId(sub.buildingId,b.id)) patch.buildingId=b.id;
+      if(!sameId(sub.unitId,unit.id)||patch.buildingId) ops.push(batch=>batch.update(orgDoc('subscribers',sub.id),patch));
+    }
+    const meter=meters.find(m=>sameId(m.subscriberId,sub.id));
+    if(meter && unit && !sameId(meter.unitId,unit.id)) ops.push(batch=>batch.update(orgDoc('meters',meter.id),{unitId:unit.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid}));
+  }
+  for(const m of meters){
+    const sub=subs.find(s=>sameId(s.id,m.subscriberId));
+    if(sub?.type==='خارجي') continue;
+    const unit=sub?unitForSub(sub):findUnitRef(m.unitId);
+    if(unit && !sameId(m.unitId,unit.id)) ops.push(batch=>batch.update(orgDoc('meters',m.id),{unitId:unit.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid}));
+  }
+  // Create missing water meters for internal residents so new and legacy residents enter water calculations consistently.
+  for(const sub of subs){
+    if(sub.type==='خارجي'||sub.active===false) continue;
+    if(meters.some(m=>sameId(m.subscriberId,sub.id))) continue;
+    const unit=unitForSub(sub);
+    const ref=doc(orgCollection('meters'));
+    ops.push(batch=>batch.set(ref,{meterCode:`W-${sub.code}`,meterType:'مياه',subscriberId:sub.id,unitId:unit?.id||null,active:true,createdAt:serverTimestamp(),createdBy:state.user.uid}));
+  }
+  if(!ops.length) return;
+  await commitOps(ops);
+  state.loaded=false;
+  // Do not recurse through repairEntityLinks endlessly; the next forced load sees normalized data.
+  const results=await Promise.all(['buildings','units','subscribers','meters'].map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));
+  for(const [c,rows] of results) state.data[c]=rows;
+  state.loaded=true;
 }
 
 async function ensureProfile(){
@@ -345,10 +413,10 @@ function waterSummaryTotal(pid){
 
 function buildingWaterBreakdown(pid){
   const out=[];for(const b of (state.data.buildings||[])){
-    const unitIds=(state.data.units||[]).filter(u=>u.buildingId===b.id).map(u=>u.id);const subIds=(state.data.subscribers||[]).filter(s=>unitIds.includes(s.unitId)&&s.type!=='خارجي'&&s.active!==false).map(s=>s.id);const meterIds=(state.data.meters||[]).filter(m=>subIds.includes(m.subscriberId)).map(m=>m.id);
+    const unitIds=(state.data.units||[]).filter(u=>sameId(u.buildingId,b.id)).map(u=>u.id);const subIds=(state.data.subscribers||[]).filter(s=>unitIds.some(uid=>sameId(uid,s.unitId))&&s.type!=='خارجي'&&s.active!==false).map(s=>s.id);const meterIds=(state.data.meters||[]).filter(m=>subIds.some(sid=>sameId(sid,m.subscriberId))).map(m=>m.id);
     const total=readingsForPeriod(pid).filter(r=>meterIds.includes(r.meterId)).reduce((a,r)=>a+(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:0),0);out.push({id:b.id,name:b.name,total});
   }
-  const externalSubIds=(state.data.subscribers||[]).filter(s=>s.type==='خارجي'&&s.active!==false).map(s=>s.id);const extMeters=(state.data.meters||[]).filter(m=>externalSubIds.includes(m.subscriberId)).map(m=>m.id);const external=readingsForPeriod(pid).filter(r=>extMeters.includes(r.meterId)).reduce((a,r)=>a+(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:0),0);return {buildings:out,external};
+  const externalSubIds=(state.data.subscribers||[]).filter(s=>s.type==='خارجي'&&s.active!==false).map(s=>s.id);const extMeters=(state.data.meters||[]).filter(m=>externalSubIds.some(sid=>sameId(sid,m.subscriberId))).map(m=>m.id);const external=readingsForPeriod(pid).filter(r=>extMeters.some(mid=>sameId(mid,r.meterId))).reduce((a,r)=>a+(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:0),0);return {buildings:out,external};
 }
 
 async function ensureWaterSummaryForPeriod(pid){
@@ -383,7 +451,7 @@ async function createPeriod(){
   if((state.data.periods||[]).some(p=>p.startDate===start&&p.endDate===end)){toast('هذا الأسبوع موجود بالفعل','error');return;}
   const ref=doc(orgCollection('periods'));const p={label,startDate:start,endDate:end,status:'Draft',waterUnitPrice:$('#pPrice').value===''?null:num($('#pPrice').value),createdAt:serverTimestamp(),createdBy:state.user.uid};const batch=writeBatch(db);batch.set(ref,p);
   const residents=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');
-  for(const s of residents){const meter=(state.data.meters||[]).find(m=>m.subscriberId===s.id);if(!meter)continue;const history=(state.data.readings||[]).filter(r=>r.meterId===meter.id&&r.currentReading!=null).map(r=>({r,p:periodById(r.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)));const prev=history[0]?.r.currentReading??null;batch.set(doc(orgCollection('readings')),{periodId:ref.id,meterId:meter.id,previousReading:prev,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice,chargeAmount:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
+  for(const s of residents){const meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,s.id));if(!meter)continue;const history=(state.data.readings||[]).filter(r=>r.meterId===meter.id&&r.currentReading!=null).map(r=>({r,p:periodById(r.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)));const prev=history[0]?.r.currentReading??null;batch.set(doc(orgCollection('readings')),{periodId:ref.id,meterId:meter.id,previousReading:prev,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice,chargeAmount:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
   for(const src of (state.data.sources||[]).filter(x=>x.active!==false)){const history=(state.data.energyReadings||[]).filter(r=>r.sourceId===src.id&&r.currentReading!=null).map(r=>({r,p:periodById(r.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)));const prev=history[0]?.r.currentReading??null;batch.set(doc(orgCollection('energyReadings')),{periodId:ref.id,sourceId:src.id,previousReading:prev,currentReading:null,consumption:null,pricePerKwh:src.defaultRate??null,cost:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
   const ext=(state.data.waterSummary||[]).filter(x=>x.key==='external'&&x.currentReading!=null&&x.periodId!==ref.id).map(x=>({x,p:periodById(x.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.x?.currentReading??null;batch.set(doc(orgCollection('waterSummary')),{periodId:ref.id,key:'external',label:'الخارجي',type:'external',buildingId:null,previousReading:ext,currentReading:null,consumption:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:state.user.uid});
   await batch.commit();state.loaded=false;await loadData(true);state.periodId=ref.id;closeModal();toast('تم فتح الأسبوع وتجهيز القراءات');await navigate('periods',ref.id,true);
@@ -398,10 +466,10 @@ function waterSummaryTable(pid){
   const ext=waterSummaryForPeriod(pid).find(r=>r.key==='external'||r.type==='external')||{id:'',key:'external',label:'الخارجي',type:'external',previousReading:null,currentReading:null};
   const extCons=ext.currentReading!=null&&ext.previousReading!=null?Math.max(0,num(ext.currentReading)-num(ext.previousReading))/1000:null;
   const allRows=[...breakdown.buildings.map(b=>({kind:'building',...b})),{kind:'external',...ext,total:extCons}];
-  return `<div class="water-master"><div class="water-master-head"><div><h3>١) إجمالي استهلاك المياه</h3><p>البناية الأولى والثانية تُحسبان تلقائيًا من مجموع السكان. الخارجي فقط تدخله هنا.</p></div><div class="water-master-total" id="waterMasterTotal">${fmt(waterSummaryTotal(pid),3)} كوب</div></div><div class="table-wrap"><table class="table master-water-table"><thead><tr><th>الجهة</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>الاستهلاك</th><th>المصدر</th><th>الحالة</th></tr></thead><tbody>${allRows.map(r=>{
+  return `<div class="water-master"><div class="water-master-head"><div><h3>١) إجمالي استهلاك المياه</h3><p>البناية الأولى والثانية تُحسبان تلقائيًا من مجموع السكان. الخارجي فقط تدخله هنا.</p></div><div class="water-master-total" id="waterMasterTotal">${fmt(waterSummaryTotal(pid),3)} كوب</div></div><div class="table-wrap"><table class="table master-water-table"><thead><tr><th>الجهة</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>الاستهلاك</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>${allRows.map(r=>{
     const isExt=r.kind==='external';
-    return `<tr ${isExt&&r.id?`data-wsid="${r.id}"`:''}><td><b>${safe(r.name||r.label)}</b><small>${isExt?'استهلاك خارجي':'مجموع استهلاك السكان'}</small></td><td>${isExt?`<input class="reading-input ws-prev" type="number" step="0.001" value="${r.previousReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td>${isExt?`<input class="reading-input ws-current" type="number" step="0.001" value="${r.currentReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td class="ws-cons">${r.total==null?'—':fmt(r.total,3)+' كوب'}</td><td>${isExt?'<span class="badge info">يدوي</span>':'<span class="badge ok">تلقائي</span>'}</td><td class="ws-status">${r.total==null?'<span class="badge warn">بانتظار</span>':'<span class="badge ok">جاهزة</span>'}</td></tr>`;
-  }).join('')}</tbody></table></div><div class="master-water-footer"><span>سعر الكوب يعتمد على إجمالي السكان في البنايتين + الخارجي</span><span class="autosave-note">الحفظ التلقائي مفعّل</span><button class="btn soft" id="saveWaterSummary">حفظ الآن</button><button class="btn ghost" id="deleteExternalReading">حذف قراءة الخارجي</button></div></div>`;
+    return `<tr ${isExt&&r.id?`data-wsid="${r.id}"`:''}><td><b>${safe(r.name||r.label)}</b><small>${isExt?'استهلاك خارجي':'مجموع استهلاك السكان'}</small></td><td>${isExt?`<input class="reading-input ws-prev" type="number" step="0.001" value="${r.previousReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td>${isExt?`<input class="reading-input ws-current" type="number" step="0.001" value="${r.currentReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td class="ws-cons">${r.total==null?'—':fmt(r.total,3)+' كوب'}</td><td>${isExt?'<span class="badge info">يدوي</span>':'<span class="badge ok">تلقائي</span>'}</td><td class="ws-status">${r.total==null?'<span class="badge warn">بانتظار</span>':'<span class="badge ok">جاهزة</span>'}</td><td>${!isExt&&can('admin','manager')?`<button class="mini red" data-water-delete-building="${r.id}" title="حذف البناية">حذف</button>`:''}</td></tr>`;
+  }).join('')}</tbody></table></div><div class="master-water-footer"><span>سعر الكوب يعتمد على إجمالي السكان في البنايتين + الخارجي. زر حذف البناية يظهر هنا أيضًا حتى لو لم يكن عليها استهلاك ماء.</span><span class="autosave-note">الحفظ التلقائي مفعّل</span><button class="btn soft" id="saveWaterSummary">حفظ الآن</button><button class="btn ghost" id="deleteExternalReading">حذف قراءة الخارجي</button></div></div>`;
 }
 let __autoSaveTimers={};
 function queueAutoSave(key,fn){
@@ -425,6 +493,7 @@ function bindWaterSummaryInputs(pid){
     $('#waterMasterTotal').textContent=`${fmt(total,3)} كوب`;
   }));
   $('#deleteExternalReading')?.addEventListener('click',()=>deleteExternalWaterSummary(pid));
+  $$('[data-water-delete-building]').forEach(b=>b.addEventListener('click',()=>deleteBuilding(b.dataset.waterDeleteBuilding)));
   $('#saveWaterSummary').onclick=async()=>{
     if(!can('admin','manager','accountant','operator')){toast('لا تملك صلاحية التعديل','error');return;}
     const tr=$('[data-wsid]'); if(!tr){toast('لا يوجد إدخال خارجي','error');return;}
@@ -564,8 +633,8 @@ function renderSubscribers(){
     </div>
     <div class="panel">
       <div class="panel-head"><div><h2>البنايات والوحدات</h2></div><div class="panel-actions"><button class="btn primary" id="addBuilding">+ بناية</button><button class="btn soft" id="addUnit">+ وحدة</button></div></div>
-      <div class="mini-section"><h3>البنايات</h3><div class="members">${buildings.length?buildings.map(b=>`<div class="member-row"><div class="avatar">ب</div><div class="member-info"><b>${safe(b.name)}</b><span>الكود: ${safe(b.code||'—')} • ${units.filter(u=>u.buildingId===b.id).length} وحدات</span></div>${canManage?`<button class="mini" data-edit-building="${b.id}">تعديل</button><button class="mini red" data-delete-building="${b.id}">حذف</button>`:''}</div>`).join(''):empty('لا توجد بنايات','أضف البناية الأولى.')}</div></div>
-      <div class="mini-section"><h3>الوحدات</h3><div class="members">${units.length?units.sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true})).map(u=>{const b=buildings.find(x=>x.id===u.buildingId);const occupant=rows.find(s=>s.unitId===u.id&&s.active!==false);return `<div class="member-row"><div class="avatar">و</div><div class="member-info"><b>${safe(u.code)}</b><span>${safe(b?.name||'—')} · ${occupant?safe(occupant.name):'غير مشغولة'}</span></div>${canManage?`<button class="mini" data-edit-unit="${u.id}">تعديل</button><button class="mini red" data-delete-unit="${u.id}">حذف</button>`:''}</div>`}).join(''):empty('لا توجد وحدات','أضف وحدة جديدة.')}</div></div>
+      <div class="mini-section"><h3>البنايات</h3><div class="members">${buildings.length?buildings.map(b=>`<div class="member-row"><div class="avatar">ب</div><div class="member-info"><b>${safe(b.name)}</b><span>الكود: ${safe(b.code||'—')} • ${units.filter(u=>sameId(u.buildingId,b.id)).length} وحدات</span></div>${canManage?`<button class="mini" data-edit-building="${b.id}">تعديل</button><button class="mini red" data-delete-building="${b.id}">حذف</button>`:''}</div>`).join(''):empty('لا توجد بنايات','أضف البناية الأولى.')}</div></div>
+      <div class="mini-section"><h3>الوحدات</h3><div class="members">${units.length?units.sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true})).map(u=>{const b=buildings.find(x=>x.id===u.buildingId);const occupant=rows.find(s=>sameId(s.unitId,u.id)&&s.active!==false);return `<div class="member-row"><div class="avatar">و</div><div class="member-info"><b>${safe(u.code)}</b><span>${safe(b?.name||'—')} · ${occupant?safe(occupant.name):'غير مشغولة'}</span></div>${canManage?`<button class="mini" data-edit-unit="${u.id}">تعديل</button><button class="mini red" data-delete-unit="${u.id}">حذف</button>`:''}</div>`}).join(''):empty('لا توجد وحدات','أضف وحدة جديدة.')}</div></div>
     </div>
   </section>`;
   $('#addBuilding').onclick=()=>showBuildingForm();$('#addUnit').onclick=()=>showUnitForm();$('#addSub')?.addEventListener('click',()=>showSubscriberForm());$('#exportSubs').onclick=()=>exportSubscribers(rows);
@@ -589,78 +658,109 @@ function showUnitForm(id){const u=id?(state.data.units||[]).find(x=>x.id===id):n
 async function syncNewResidentServices(subscriber, meter){
   if(!subscriber || subscriber.type==='خارجي' || subscriber.active===false) return;
   const periods=allPeriodsAscending();
+  if(!periods.length) return;
+  const latest=periods.at(-1);
   const ops=[];
   const now=serverTimestamp();
-  // 1) Every existing period gets a water-reading row for the new resident.
-  //    The previous reading is the most recent prior current reading, otherwise blank.
+  const existingReadings=state.data.readings||[];
   for(const p of periods){
-    const exists=(state.data.readings||[]).some(r=>r.periodId===p.id && r.meterId===meter.id);
-    if(exists) continue;
-    const prior=[...(state.data.readings||[])]
-      .filter(r=>r.meterId===meter.id && r.currentReading!=null && periodById(r.periodId))
+    if(existingReadings.some(r=>sameId(r.periodId,p.id)&&sameId(r.meterId,meter.id))) continue;
+    const prior=[...existingReadings]
+      .filter(r=>sameId(r.meterId,meter.id)&&r.currentReading!=null&&periodById(r.periodId))
       .map(r=>({r,p:periodById(r.periodId)}))
-      .filter(x=>String(x.p.startDate||'') < String(p.startDate||''))
-      .sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.r?.currentReading ?? null;
+      .filter(x=>String(x.p.startDate||'')<String(p.startDate||''))
+      .sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.r?.currentReading??null;
     const rr=doc(orgCollection('readings'));
-    ops.push(b=>b.set(rr,{periodId:p.id,meterId:meter.id,previousReading:prior,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice||null,chargeAmount:null,status:'Pending',createdAt:now,updatedAt:now,createdBy:state.user.uid}));
+    ops.push(b=>b.set(rr,{periodId:p.id,meterId:meter.id,previousReading:prior,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice??null,chargeAmount:null,status:'Pending',createdAt:now,updatedAt:now,createdBy:state.user.uid}));
   }
-  // 2) If guard service was already applied in a month, include a newly-added resident
-  //    with the same per-person amount. Admin can still exclude them from the Guard page.
-  for(const p of periods.filter(x=>isGuardChargePeriod(x.id))){
-    const guardRows=(state.data.ledger||[]).filter(x=>x.periodId===p.id&&x.transactionType==='SERVICE'&&x.serviceCode==='GUARD');
-    if(!guardRows.length) continue;
-    const has=guardRows.some(x=>x.subscriberId===subscriber.id);
-    if(has) continue;
-    const amount=num(guardRows[0].debit)-num(guardRows[0].credit);
+  // A new resident is included in already-applied services for the current/latest billing period only.
+  // This avoids charging historical months retroactively.
+  const serviceRows=(state.data.ledger||[]).filter(x=>sameId(x.periodId,latest.id)&&x.transactionType==='SERVICE'&&['GUARD','PUMP_INSURANCE'].includes(x.serviceCode));
+  const serviceCodes=[...new Set(serviceRows.map(x=>x.serviceCode))];
+  for(const code of serviceCodes){
+    if(serviceRows.some(x=>sameId(x.subscriberId,subscriber.id)&&x.serviceCode===code)) continue;
+    const sample=serviceRows.find(x=>x.serviceCode===code);
+    const amount=sample?num(sample.debit)-num(sample.credit):0;
     if(amount<=0) continue;
     const lr=doc(orgCollection('ledger'));
-    ops.push(b=>b.set(lr,{subscriberId:subscriber.id,periodId:p.id,transactionType:'SERVICE',serviceCode:'GUARD',debit:amount,credit:0,description:'خدمة الحارس',createdAt:now,createdBy:state.user.uid}));
+    ops.push(b=>b.set(lr,{subscriberId:subscriber.id,periodId:latest.id,transactionType:'SERVICE',serviceCode:code,debit:amount,credit:0,description:code==='GUARD'?'خدمة الحارس':'تأمين الغاطس',createdAt:now,createdBy:state.user.uid}));
+  }
+  if(Number(subscriber.defaultPumpInsurance||0)>0 && !serviceRows.some(x=>sameId(x.subscriberId,subscriber.id)&&x.serviceCode==='PUMP_INSURANCE')){
+    const amount=num(subscriber.defaultPumpInsurance);
+    const lr=doc(orgCollection('ledger'));
+    ops.push(b=>b.set(lr,{subscriberId:subscriber.id,periodId:latest.id,transactionType:'SERVICE',serviceCode:'PUMP_INSURANCE',debit:amount,credit:0,description:'تأمين الغاطس',createdAt:now,createdBy:state.user.uid}));
   }
   if(!ops.length) return;
   await commitOps(ops);
-  state.loaded=false;
-  await loadData(true);
+  state.loaded=false;await loadData(true);
 }
-
 function showSubscriberForm(id){
   if(!can('admin','manager')){toast('إضافة وتعديل بيانات السكان مخصصة للمديرين فقط','error');return;}
-  const s=id?(state.data.subscribers||[]).find(x=>x.id===id):null;
+  const s=id?(state.data.subscribers||[]).find(x=>sameId(x.id,id)):null;
   const u=s?unitForSub(s):null;
+  const currentBuilding=u?findBuildingRef(u.buildingId):null;
   openModal(`<h2>${s?'تعديل بيانات الساكن':'إضافة ساكن جديد'}</h2>
-    <p class="modal-lead">بيانات الساكن الأساسية فقط. خدمة الحارس وتأمين الغاطس تدار من صفحاتهما الخاصة.</p>
+    <p class="modal-lead">اختر البناية أولًا ثم ستظهر وحداتها فقط. بعد الحفظ يُنشأ/يُصلح عداد المياه وتُزامَن الخدمات المستحقة للسكان.</p>
     <div class="form-grid">
       <div class="field"><label>الاسم</label><input id="fName" value="${safe(s?.name||'')}"></div>
       <div class="field"><label>الكود</label><input id="fCode" value="${safe(s?.code||'')}"></div>
       <div class="field"><label>النوع</label><select id="fType"><option value="داخلي" ${s?.type!=='خارجي'?'selected':''}>ساكن داخلي</option><option value="خارجي" ${s?.type==='خارجي'?'selected':''}>مستهلك خارجي</option></select></div>
       <div class="field"><label>الهاتف</label><input id="fPhone" value="${safe(s?.phone||'')}"></div>
-      <div class="field"><label>البناية</label><select id="fBuilding"><option value="">${s?.type==='خارجي'?'غير مرتبط ببناية':'اختر البناية'}</option>${(state.data.buildings||[]).map(b=>`<option value="${b.id}" ${u?.buildingId===b.id?'selected':''}>${safe(b.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>الوحدة</label><select id="fUnit"><option value="">${s?.type==='خارجي'?'خارجي / بدون وحدة':'اختر الوحدة'}</option>${(state.data.units||[]).map(x=>`<option value="${x.id}" ${x.id===u?.id?'selected':''}>${safe(buildingName(x.buildingId))} — ${safe(x.code)}</option>`).join('')}</select></div>
+      <div class="field"><label>البناية</label><select id="fBuilding"><option value="">${s?.type==='خارجي'?'غير مرتبط ببناية':'اختر البناية'}</option>${(state.data.buildings||[]).map(b=>`<option value="${b.id}" ${currentBuilding&&sameId(currentBuilding.id,b.id)?'selected':''}>${safe(b.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>الوحدة</label><select id="fUnit"><option value="">${s?.type==='خارجي'?'خارجي / بدون وحدة':'اختر البناية أولًا'}</option></select></div>
       <div class="field full"><label>ملاحظات</label><textarea id="fNotes">${safe(s?.notes||'')}</textarea></div>
     </div>
     <div class="actions"><button class="btn primary" id="saveSub">حفظ</button><button class="btn ghost" id="cancelSub">إلغاء</button></div>`);
+  const fillUnits=()=>{
+    const type=$('#fType').value,buildingId=$('#fBuilding').value;
+    const unitSelect=$('#fUnit');
+    if(type==='خارجي'){unitSelect.innerHTML='<option value="">خارجي / بدون وحدة</option>';unitSelect.value='';return;}
+    const units=(state.data.units||[]).filter(x=>sameId(x.buildingId,buildingId)).sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
+    unitSelect.innerHTML=`<option value="">اختر الوحدة</option>${units.map(x=>`<option value="${x.id}" ${u&&sameId(u.id,x.id)?'selected':''}>${safe(x.code)}</option>`).join('')}`;
+    if(u&&!units.some(x=>sameId(x.id,u.id))) unitSelect.value='';
+  };
+  $('#fBuilding').onchange=fillUnits;
+  $('#fType').onchange=()=>{
+    const external=$('#fType').value==='خارجي';
+    $('#fBuilding').disabled=external;
+    $('#fUnit').disabled=external;
+    if(external){$('#fBuilding').value='';$('#fUnit').value='';}
+    fillUnits();
+  };
+  $('#fType').onchange(); fillUnits();
   $('#cancelSub').onclick=closeModal;
   $('#saveSub').onclick=async()=>{
-    const name=$('#fName').value.trim(),code=$('#fCode').value.trim(),type=$('#fType').value;
+    const name=$('#fName').value.trim(),code=$('#fCode').value.trim(),type=$('#fType').value,buildingId=$('#fBuilding').value||null,unitId=$('#fUnit').value||null;
     if(!name||!code){toast('اكتب الاسم والكود','error');return;}
-    if((state.data.subscribers||[]).some(x=>x.code===code&&x.id!==id)){toast('الكود مستخدم بالفعل','error');return;}
-    const unitId=type==='خارجي'?null:($('#fUnit').value||null);
-    const data={name,code,type,phone:$('#fPhone').value.trim(),unitId,notes:$('#fNotes').value.trim(),active:true};
+    if((state.data.subscribers||[]).some(x=>String(x.code||'')===code&&x.id!==id)){toast('الكود مستخدم بالفعل','error');return;}
+    if(type!=='خارجي'){
+      if(!buildingId){toast('اختر البناية أولًا','error');return;}
+      const unit=(state.data.units||[]).find(x=>sameId(x.id,unitId));
+      if(!unit||!sameId(unit.buildingId,buildingId)){toast('الوحدة لا تتبع البناية المختارة. اختر الوحدة من قائمة البناية نفسها.','error');return;}
+      if((state.data.subscribers||[]).some(x=>x.active!==false&&x.type!=='خارجي'&&sameId(x.unitId,unitId)&&x.id!==id)){toast('هذه الوحدة مرتبطة بساكن آخر بالفعل','error');return;}
+    }
+    const data={name,code,type,phone:$('#fPhone').value.trim(),buildingId:type==='خارجي'?null:buildingId,unitId:type==='خارجي'?null:unitId,notes:$('#fNotes').value.trim(),active:true};
     if(s){
       await updateDoc(orgDoc('subscribers',id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
-      const meter=(state.data.meters||[]).find(m=>m.subscriberId===id);
-      if(meter)await updateDoc(orgDoc('meters',meter.id),{unitId});
+      let meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,id));
+      if(meter) await updateDoc(orgDoc('meters',meter.id),{unitId:data.unitId,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+      else if(type!=='خارجي'){
+        const mr=doc(orgCollection('meters'));
+        await setDoc(mr,{meterCode:`W-${code}`,meterType:'مياه',subscriberId:id,unitId:data.unitId,active:true,createdAt:serverTimestamp(),createdBy:state.user.uid});
+      }
       upsertLocal('subscribers',{id,...data});
-      toast('تم تعديل بيانات الساكن');
+      toast('تم تعديل بيانات الساكن وربطه بالبناية والوحدة');
     }else{
       const sr=doc(orgCollection('subscribers'));
-      await setDoc(sr,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid});
-      const mr=doc(orgCollection('meters'));
-      await setDoc(mr,{meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId,active:true,createdAt:serverTimestamp()});
+      const mr=type==='خارجي'?null:doc(orgCollection('meters'));
+      const batch=writeBatch(db);
+      batch.set(sr,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid});
+      if(mr) batch.set(mr,{meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true,createdAt:serverTimestamp(),createdBy:state.user.uid});
+      await batch.commit();
       upsertLocal('subscribers',{id:sr.id,...data});
-      upsertLocal('meters',{id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId,active:true});
-      // الساكن الجديد يدخل فورًا في الخدمات الطبيعية الموجودة بالفعل.
-      await syncNewResidentServices({...data,id:sr.id}, {id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId,active:true});
-      toast('تمت إضافة الساكن وإدخاله في الخدمات الحالية');
+      if(mr) upsertLocal('meters',{id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true});
+      if(mr) await syncNewResidentServices({...data,id:sr.id},{id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true});
+      toast(type==='خارجي'?'تمت إضافة المستهلك الخارجي':'تمت إضافة الساكن وربطه بكل خدماته الأساسية');
     }
     closeModal();state.loaded=false;await loadData(true);renderSubscribers();
   };
@@ -838,6 +938,52 @@ function showDebtForm(id){
 }
 
 
+// =========================
+// Reliable Excel exports
+// =========================
+function downloadCsvFallback(rows,file){
+  const safeRows=rows.length?rows:[{}];
+  const head=Object.keys(safeRows[0]);
+  const csv='\ufeff'+[head.join(','),...safeRows.map(r=>head.map(k=>`"${String(r[k]??'').replaceAll('\"','\"\"')}"`).join(','))].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.replace(/\.xlsx$/i,'.csv');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('تم تنزيل ملف CSV قابل للفتح في Excel');
+}
+function exportXlsx(rows,sheet,file){
+  const data=Array.isArray(rows)?rows:[];
+  if(window.XLSX?.utils){
+    try{
+      const wb=window.XLSX.utils.book_new();
+      const ws=window.XLSX.utils.json_to_sheet(data.length?data:[{}],{skipHeader:false});
+      window.XLSX.utils.book_append_sheet(wb,ws,String(sheet||'تقرير').slice(0,31));
+      window.XLSX.writeFile(wb,file);
+      toast('تم تنزيل ملف Excel');
+      return;
+    }catch(e){console.error('Excel export failed',e);}
+  }
+  downloadCsvFallback(data,file);
+}
+function subscriberExportRows(rows){return rows.filter(s=>s.active!==false).map(s=>{const u=unitForSub(s);return{الكود:s.code||'',الاسم:s.name||'',النوع:s.type||'',الهاتف:s.phone||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',المديونية:subscriberRow(s).debt??0};});}
+function exportSubscribers(rows){exportXlsx(subscriberExportRows(rows||state.data.subscribers||[]),'السكان','سكان_عمارة_الأمين.xlsx');}
+function exportPayments(rows){exportXlsx((rows||[]).map(p=>({التاريخ:p.paymentDate||'',الأسبوع:periodById(p.periodId)?.label||'',الساكن:(state.data.subscribers||[]).find(s=>sameId(s.id,p.subscriberId))?.name||'—',المبلغ:p.amount??0,الطريقة:p.method||'',الإيصال:p.receiptNumber||'',الملاحظة:p.note||''})),'الدفعات','دفعات_عمارة_الأمين.xlsx');}
+function exportPeriod(pid){
+  const p=periodById(pid);
+  const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>sameId(x.id,r.meterId));const s=subscriberByMeter(m);const u=s?unitForSub(s):null;return{الكود:s?.code||'',الاسم:s?.name||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',السحب:r.consumption??'',سعر_الكوب:r.unitPrice??p?.waterUnitPrice??'',قيمة_المياه:r.chargeAmount??''};});
+  exportXlsx(rows,'قراءات الماء',`قراءات_الماء_${p?.startDate||pid}.xlsx`);
+}
+function exportEnergy(pid){
+  const rows=energyForPeriod(pid).map(r=>{const src=(state.data.sources||[]).find(s=>sameId(s.id,r.sourceId));const consumption=r.consumption??(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null);return{الأسبوع:periodById(pid)?.label||'',المصدر:src?.name||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',الاستهلاك:consumption??'',سعر_الكيلو:r.pricePerKwh??'',التكلفة:r.cost??(consumption!=null&&r.pricePerKwh!=null?consumption*num(r.pricePerKwh):'')};});
+  exportXlsx(rows,'الكهرباء',`كهرباء_${periodById(pid)?.startDate||pid}.xlsx`);
+}
+function exportBalances(rows){exportXlsx((rows||[]).filter(s=>s.type!=='خارجي'&&s.active!==false).map(s=>({الكود:s.code||'',الاسم:s.name||'',البناية:s.buildingName||unitForSub(s)&&buildingName(unitForSub(s).buildingId)||'—',الوحدة:s.unitCode||unitForSub(s)?.code||'—',المديونية:s.debt??s.balance??0})),'المديونيات','مديونيات_عمارة_الأمين.xlsx');}
+function exportSummary(pid){
+  const t=currentTotals(pid),p=t.period;
+  const rows=[{البيان:'الأسبوع',القيمة:p?.label||''},{البيان:'من',القيمة:p?.startDate||''},{البيان:'إلى',القيمة:p?.endDate||''},{البيان:'إجمالي استهلاك المياه',القيمة:t.waterTotal},{البيان:'تكلفة الكهرباء',القيمة:t.energyCost},{البيان:'مصاريف التشغيل الداخلة في سعر الماء',القيمة:t.extraCost},{البيان:'المساهمات والخصومات',القيمة:t.contributionsTotal},{البيان:'صافي التكلفة',القيمة:t.netCost},{البيان:'السعر الخام للكوب',القيمة:t.rawPrice},{البيان:'السعر المعتمد للكوب',القيمة:t.appliedPrice}];
+  for(const b of t.waterBreakdown.buildings) rows.push({البيان:`استهلاك ${b.name}`,القيمة:b.total});
+  rows.push({البيان:'استهلاك الخارجي',القيمة:t.externalWater});
+  exportXlsx(rows,'ملخص الحساب',`ملخص_الحساب_${p?.startDate||pid}.xlsx`);
+}
+
 function renderReports(){
   setTitle('التقارير والتصدير','اختر الساكن والأسبوع. التقرير والرسالة يستخدمان نفس الحساب.');
   const periods=latestPeriods(),oldest=[...periods].sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate))),subs=(state.data.subscribers||[]).filter(s=>s.active!==false).sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
@@ -1008,7 +1154,7 @@ function buildPdfHostFromElement(source, s, fromDate, toDate){
   table.insertBefore(cg,table.firstChild);
   const host=document.createElement('div');
   host.dir='rtl';
-  host.style.cssText='position:fixed;left:-20000px;top:0;width:1120px;background:#fff;padding:24px;visibility:visible;direction:rtl;font-family:Arial,sans-serif;color:#183734;z-index:999999;';
+  host.style.cssText='position:fixed;left:0;top:0;width:1120px;background:#fff;padding:24px;visibility:visible;opacity:1;pointer-events:none;direction:rtl;font-family:Arial,sans-serif;color:#183734;z-index:999999;';
   host.innerHTML=`<div style="font-size:24px;font-weight:800;margin-bottom:8px">كشف حساب الساكن</div><div style="font-size:17px;font-weight:700;margin-bottom:4px">${safe(s?.name||'الساكن')} — ${safe(subscriberRow(s).unitCode||'')}</div><div style="font-size:11px;color:#5f6c67;margin-bottom:16px">من ${safe(fmtDate(fromDate)||'الأقدم')} إلى ${safe(fmtDate(toDate)||'الأحدث')}</div>`;
   host.appendChild(table);
   document.body.appendChild(host);
@@ -1038,7 +1184,7 @@ async function downloadReportElementPdf(source,s,periods){
       margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},
       html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,width:1120,windowWidth:1120,scrollX:0,scrollY:0},
       jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},
-      pagebreak:{mode:['css','legacy']}
+      pagebreak:{mode:['css','legacy'],before:'.pdf-page-break',avoid:['tr']}
     }).from(host).save();
     toast('تم تنزيل كشف الحساب PDF');
   }catch(e){console.error(e);toast('تعذر إنشاء PDF','error');}
@@ -1178,9 +1324,28 @@ async function deleteSubscriber(id){
   await commitOps(ops);state.loaded=false;await loadData(true);toast('تم حذف الساكن');renderSubscribers();
 }
 async function deleteBuilding(id){
-  if(!can('admin','manager')){toast('حذف البنايات مخصص للمدير','error');return;}
-  if((state.data.units||[]).some(u=>u.buildingId===id)){toast('لا يمكن حذف البناية قبل حذف الوحدات التابعة لها.','error');return;}
-  const b=(state.data.buildings||[]).find(x=>x.id===id);if(!b)return;if(!confirm(`حذف البناية ${b.name}؟`))return;const ops=[bb=>bb.delete(orgDoc('buildings',id))];const seed=(INITIAL_DATA.buildings||[]).find(x=>x.id===id||x.code===b.code);if(seed)ops.push(bb=>bb.set(orgDoc('seedDeletes',`buildings__${seed.id}`),{key:seedDeleteKey('buildings',seed.id),deletedAt:serverTimestamp(),deletedBy:state.user.uid}));await commitOps(ops);state.loaded=false;await loadData(true);toast('تم حذف البناية');renderSubscribers();}
+  if(!can('admin','manager')){toast('حذف البنايات مخصص للمديرين','error');return;}
+  const b=(state.data.buildings||[]).find(x=>sameId(x.id,id));if(!b)return;
+  const units=(state.data.units||[]).filter(u=>sameId(u.buildingId,id)||sameId(findBuildingRef(u.buildingId)?.id,id));
+  const unitIds=units.map(u=>u.id);
+  const linkedSubs=(state.data.subscribers||[]).filter(s=>{const u=unitForSub(s);return u&&unitIds.some(uid=>sameId(uid,u.id));});
+  const financialSubs=linkedSubs.filter(s=>(state.data.ledger||[]).some(x=>sameId(x.subscriberId,s.id))||(state.data.payments||[]).some(x=>sameId(x.subscriberId,s.id))||(state.data.debts||[]).some(x=>sameId(x.subscriberId,s.id)));
+  if(linkedSubs.length){
+    toast(`لا يمكن حذف ${b.name}: عليها ${linkedSubs.length} ساكن/سكان مرتبطين. انقل السكان أو احذفهم بالطريقة الآمنة أولًا.`,'error');return;
+  }
+  if(financialSubs.length){
+    toast('لا يمكن حذف البناية لأن لها تاريخًا ماليًا مرتبطًا بالسكان.','error');return;
+  }
+  const serviceRows=(state.data.ledger||[]).filter(x=>unitIds.some(uid=>{const sub=linkedSubs.find(s=>sameId(s.id,x.subscriberId));return !!sub&&sameId(sub.unitId,uid);}));
+  if(serviceRows.length){toast('لا يمكن حذف البناية لأن عليها حركات خدمات مرتبطة.','error');return;}
+  if(!confirm(`حذف البناية «${b.name}»؟ سيتم حذف وحداتها الفارغة فقط. لا يمكن التراجع من داخل الموقع.`))return;
+  const ops=[batch=>batch.delete(orgDoc('buildings',b.id))];
+  for(const u of units) ops.push(batch=>batch.delete(orgDoc('units',u.id)));
+  const seed=(INITIAL_DATA.buildings||[]).find(x=>x.id===b.id||String(x.code||'')===String(b.code||''));
+  if(seed) ops.push(batch=>batch.set(orgDoc('seedDeletes',`buildings__${seed.id}`),{key:seedDeleteKey('buildings',seed.id),deletedAt:serverTimestamp(),deletedBy:state.user.uid}));
+  for(const u of units){const seedU=(INITIAL_DATA.units||[]).find(x=>x.id===u.id||String(x.code||'')===String(u.code||''));if(seedU) ops.push(batch=>batch.set(orgDoc('seedDeletes',`units__${seedU.id}`),{key:seedDeleteKey('units',seedU.id),deletedAt:serverTimestamp(),deletedBy:state.user.uid}));}
+  await commitOps(ops);state.loaded=false;await loadData(true);toast(`تم حذف البناية ${b.name}`);renderSubscribers();
+}
 
 async function deleteReading(id){if(!can('admin','manager')){toast('الحذف مخصص للمديرين','error');return;}const r=(state.data.readings||[]).find(x=>x.id===id);if(!r)return;if(!confirm('حذف هذه القراءة؟ سيتم أيضًا حذف حركة المياه المرتبطة بها إن وجدت.'))return;const ops=[b=>b.delete(orgDoc('readings',id))];for(const l of (state.data.ledger||[]).filter(x=>x.referenceId===id&&x.transactionType==='WATER'))ops.push(b=>b.delete(orgDoc('ledger',l.id)));await commitOps(ops);state.loaded=false;await loadData(true);toast('تم حذف القراءة');renderReadings();}
 
