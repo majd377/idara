@@ -2,8 +2,8 @@ import { INITIAL_DATA } from './initial-data.js';
 
 import {
   auth, provider, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
-  db, orgRef, orgCollection, orgDoc, doc, getDoc, getDocs, setDoc as fsSetDoc,
-  addDoc, updateDoc as fsUpdateDoc, deleteDoc as rawDeleteDoc, writeBatch, serverTimestamp, ADMIN_EMAILS
+  db, orgRef, orgCollection, orgDoc, doc, getDoc, getDocs,
+  addDoc, setDoc as fsSetDoc, updateDoc as fsUpdateDoc, deleteDoc as rawDeleteDoc, writeBatch, serverTimestamp, ADMIN_EMAILS
 } from './firebase-init-v31.js';
 
 const $ = s => document.querySelector(s);

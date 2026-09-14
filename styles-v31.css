@@ -167,3 +167,10 @@ body{letter-spacing:0}
 @media(max-width:800px){.audit-filters{grid-template-columns:1fr 1fr}.resident-account-select{max-width:120px}}
 
 .approval-count{display:inline-flex;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;border-radius:999px;background:#c62828;color:#fff;font-size:11px;font-weight:800;margin-inline-start:auto}.readonly-hidden{display:none!important}
+
+/* Real Al-Ameen branding */
+.brand-logo{overflow:hidden;background:#fff;border:1px solid rgba(20,59,53,.10);padding:0;isolation:isolate;}
+.brand-logo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit;}
+.boot-logo{width:84px;height:84px;border-radius:24px;box-shadow:0 16px 34px rgba(19,65,57,.14);margin:0 auto;}
+.auth-logo{width:68px;height:68px;border-radius:20px;box-shadow:0 12px 26px rgba(19,65,57,.12);}
+.sidebar-logo{width:44px;height:44px;border-radius:15px;box-shadow:0 8px 18px rgba(19,65,57,.10);}
