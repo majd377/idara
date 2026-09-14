@@ -168,9 +168,69 @@ body{letter-spacing:0}
 
 .approval-count{display:inline-flex;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;border-radius:999px;background:#c62828;color:#fff;font-size:11px;font-weight:800;margin-inline-start:auto}.readonly-hidden{display:none!important}
 
-/* Real Al-Ameen branding */
-.brand-logo{overflow:hidden;background:#fff;border:1px solid rgba(20,59,53,.10);padding:0;isolation:isolate;}
-.brand-logo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit;}
-.boot-logo{width:84px;height:84px;border-radius:24px;box-shadow:0 16px 34px rgba(19,65,57,.14);margin:0 auto;}
-.auth-logo{width:68px;height:68px;border-radius:20px;box-shadow:0 12px 26px rgba(19,65,57,.12);}
-.sidebar-logo{width:44px;height:44px;border-radius:15px;box-shadow:0 8px 18px rgba(19,65,57,.10);}
+
+/* V45 responsive polish + logo */
+.brand-logo{background:#fff;border:1px solid #e5e9e4;overflow:hidden;flex:none;box-shadow:0 7px 18px rgba(24,55,49,.08);padding:2px}
+.brand-logo img{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
+.brand-logo-hero{width:110px;height:110px;border-radius:26px;margin:0 auto;padding:4px;box-shadow:0 12px 30px rgba(24,55,49,.10)}
+.brand-logo-hero img{object-fit:contain;border-radius:20px}
+.sidebar-brand .brand-logo.small{padding:2px}
+@media(max-width:900px){
+  html,body{overflow-x:hidden}
+  .main-shell{padding-left:12px;padding-right:12px}
+  .topbar{margin-bottom:14px}
+  .topbar-actions{display:grid;grid-template-columns:1fr;gap:7px;width:100%}
+  .topbar-actions .btn{width:100%}
+  .panel,.report-hero,.guide-hero,.welcome{padding:14px;border-radius:13px}
+  .panel-head{flex-direction:column;align-items:stretch;gap:10px}
+  .panel-actions,.head-actions,.row-actions,.report-table-tools,.guide-actions-right{display:flex;flex-wrap:wrap;gap:7px}
+  .panel-actions .btn,.head-actions .btn,.row-actions .btn,.report-table-tools .btn,.guide-actions-right .btn{flex:1 1 auto;min-width:120px}
+  .table-wrap{width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-inline:contain}
+  .table{min-width:680px}
+  .resident-ledger-table{min-width:900px}
+  .account-report-table{min-width:760px}
+  .modal{padding:7px;align-items:end}
+  .modal-card{width:100%;max-width:none;max-height:94vh;border-radius:17px 17px 0 0;padding:18px 14px 14px}
+  .modal-close{left:10px;top:6px}
+  .form-grid,.inline-fields,.source-row,.calc-board,.settings-grid,.grid-2,.money-grid{grid-template-columns:1fr!important}
+  .field.full{grid-column:auto!important}
+  .source-row .actions{grid-column:auto!important}
+  .reading-input{width:100%;min-width:0}
+  .readings-actions{align-items:stretch;flex-direction:column}
+  .readings-actions .btn{width:100%}
+  .stats,.report-grid,.workflow-grid{grid-template-columns:1fr 1fr!important}
+  .welcome{min-height:0!important}
+  .welcome-copy{width:100%}
+  .welcome-actions{flex-wrap:wrap}
+  .welcome-actions .btn{flex:1 1 180px}
+}
+@media(max-width:560px){
+  body{font-size:14px}
+  .main-shell{padding:0 9px 26px}
+  .topbar{min-height:70px;padding:11px 0}
+  .topbar h1{font-size:21px}
+  .breadcrumb{font-size:9px}
+  .mobile-menu{width:36px;height:36px}
+  .stats,.report-grid,.workflow-grid{grid-template-columns:1fr!important}
+  .welcome h2{font-size:22px}
+  .welcome .kicker{font-size:9px}
+  .welcome-actions{display:grid;grid-template-columns:1fr}
+  .welcome-actions .btn{width:100%}
+  .panel-head h2{font-size:15px}
+  .btn{min-height:40px;padding:9px 11px;font-size:10px}
+  .panel{padding:12px}
+  .table{min-width:620px}
+  .toast{left:9px;right:9px;bottom:9px;text-align:center}
+  .brand-logo-hero{width:88px;height:88px;border-radius:22px}
+  .auth-card{padding:24px 18px;border-radius:22px;width:min(470px,calc(100% - 20px))}
+  .auth-card h1{font-size:27px}
+  .sidebar{width:min(320px,92vw)}
+  .sidebar-header{padding:16px 14px 10px}
+  .sidebar-nav-wrap{padding-inline:9px}
+  .nav-item{padding:10px 11px;font-size:12px}
+  .profile-mini{padding:4px 0}
+}
+@media(hover:hover) and (pointer:fine){
+  .btn,.nav-item,.latest,.workflow-card{transition:transform .16s ease,box-shadow .16s ease,background .16s ease}
+  .btn:hover{transform:translateY(-1px)}
+}

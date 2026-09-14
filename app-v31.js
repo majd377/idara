@@ -72,7 +72,7 @@ async function createApprovalRequest(action,ref,data,oldData){
   return r.id;
 }
 const APPROVAL_SENT='__APPROVAL_SENT__';
-async function setDoc(ref,data,options){
+async function setDocWithAudit(ref,data,options){
   const result=await fsSetDoc(ref,data,options);
   const coll=ref?.parent?.id||'';
   if(state.user&&state.profile&&coll&&!['auditLogs','approvalRequests','seedDeletes','members'].includes(coll)&&!(data?.embeddedSource)) await addAudit('إضافة',coll,ref?.id||'',`إضافة سجل ${ref?.id||''}`);
@@ -357,7 +357,7 @@ async function ensureDefaults(){
   // Fallback for a completely new organization only if no embedded data could be used.
   if(!(state.data.buildings||[]).length){
     const b1=doc(orgCollection('buildings'));const b2=doc(orgCollection('buildings'));
-    await Promise.all([setDoc(b1,{name:'البناية الأولى',code:'1',active:true,createdAt:serverTimestamp()}),setDoc(b2,{name:'البناية الثانية',code:'2',active:true,createdAt:serverTimestamp()})]);
+    await Promise.all([setDocWithAudit(b1,{name:'البناية الأولى',code:'1',active:true,createdAt:serverTimestamp()}),setDocWithAudit(b2,{name:'البناية الثانية',code:'2',active:true,createdAt:serverTimestamp()})]);
     state.loaded=false;await loadData(true);
   }
 }
