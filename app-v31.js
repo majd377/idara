@@ -11,7 +11,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loaded:false,loading:false};
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
 const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts','fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals','solarStock','solarBatches'];
-const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',fund:'إيرادات وصندوق العمارة',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
+const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',fund:'الإيرادات و الصندوق',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
 const roundMoney=v=>Math.round(Number(v||0));
 const formatFinancialInteger=v=>new Intl.NumberFormat('en-US',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:true}).format(Math.round(Number(v||0)));
 const money=v=>`${formatFinancialInteger(v)} ₪`;
@@ -23,6 +23,21 @@ const dateNow=()=>new Date().toISOString().slice(0,10);
 const safe=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const fmtDate=v=>v?String(v).slice(0,10).split('-').reverse().join('/'):'—';
 const roleName=r=>ROLES[r]||r||'—';
+const CONTRIBUTION_TYPES={
+  utility_discount:{label:'خصم من الماء والكهرباء',short:'ماء وكهرباء'},
+  expense_discount:{label:'خصم من المصاريف',short:'المصاريف'},
+  fund_contribution:{label:'مساهمة للصندوق',short:'الصندوق'}
+};
+function contributionType(c){
+  const t=String(c?.contributionType||c?.type||'').trim();
+  if(t==='expense_discount'||t==='خصم من المصاريف') return 'expense_discount';
+  if(t==='fund_contribution'||t==='مساهمة للصندوق'||c?.toFund===true) return 'fund_contribution';
+  return 'utility_discount';
+}
+function contributionLabel(c){return CONTRIBUTION_TYPES[contributionType(c)]?.label||CONTRIBUTION_TYPES.utility_discount.label;}
+function contributionRowsForPeriod(pid){return (state.data.contributions||[]).filter(c=>sameId(c.periodId,pid));}
+function contributionTotal(pid,type){return contributionRowsForPeriod(pid).filter(c=>!type||contributionType(c)===type).reduce((a,c)=>a+num(c.amount),0);}
+
 
 function toast(msg,type='success'){const e=$('#toast');if(!e)return;e.textContent=msg;e.className='toast '+(type==='error'?'error':'');clearTimeout(window.__toast);window.__toast=setTimeout(()=>e.className='toast hidden',3000);}
 function openModal(html){$('#modalBody').innerHTML=html;$('#modal').classList.remove('hidden');$('#modal').setAttribute('aria-hidden','false');}
@@ -315,7 +330,10 @@ function renderHistorical(){
 }
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent='';$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
-function setActiveNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view)); }
+function setActiveNav(){
+  $$('.nav-item[data-view="settings"]').forEach(el=>{el.style.display=state.profile?.role==='admin'?'':'none';});
+  $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
+}
 function render(){const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,fund:renderFund,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();}
 async function navigate(view,periodId=null,force=false){if(!state.profile||state.profile.role==='pending'){renderPending();return;}state.view=view;if(periodId)state.periodId=periodId;setActiveNav();await loadData(force);render();$('#sidebar')?.classList.remove('open');}
 
@@ -349,9 +367,12 @@ function autoWaterPrice(pid){
   const externalWater=external&&external.currentReading!=null&&external.previousReading!=null?Math.max(0,num(external.currentReading)-num(external.previousReading))/1000:0;
   const water=breakdown.buildings.reduce((a,b)=>a+b.total,0)+externalWater;
   const energy=ers.reduce((a,r)=>a+(r.cost!=null?num(r.cost):(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))*num(r.pricePerKwh):0)),0);
-  const expense=cs.filter(isWaterPricingCost).reduce((a,c)=>a+num(c.amount),0);
-  const contributions=(state.data.contributions||[]).filter(c=>c.periodId===pid).reduce((a,c)=>a+num(c.amount),0);
-  const net=energy+expense-contributions;
+  const baseExpense=cs.filter(isWaterPricingCost).reduce((a,c)=>a+num(c.amount),0);
+  const utilityDiscount=contributionTotal(pid,'utility_discount');
+  const expenseDiscount=Math.min(baseExpense,contributionTotal(pid,'expense_discount'));
+  const expense=Math.max(0,baseExpense-expenseDiscount);
+  const contributions=utilityDiscount+expenseDiscount;
+  const net=Math.max(0,energy+expense-utilityDiscount);
   const raw=water>0?net/water:0;
   return raw>0?Math.ceil(raw):0;
 }
@@ -362,16 +383,19 @@ function currentTotals(pid){
   const externalWater=external&&external.currentReading!=null&&external.previousReading!=null?Math.max(0,num(external.currentReading)-num(external.previousReading))/1000:0;
   const water=breakdown.buildings.reduce((a,b)=>a+b.total,0)+externalWater;
   const energy=ers.reduce((a,r)=>a+(r.cost!=null?num(r.cost):(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))*num(r.pricePerKwh):0)),0);
-  const expense=cs.filter(isWaterPricingCost).reduce((a,c)=>a+num(c.amount),0);
-  const contributions=(state.data.contributions||[]).filter(c=>c.periodId===pid).reduce((a,c)=>a+num(c.amount),0);
-  const net=energy+expense-contributions;
+  const baseExpense=cs.filter(isWaterPricingCost).reduce((a,c)=>a+num(c.amount),0);
+  const utilityDiscount=contributionTotal(pid,'utility_discount');
+  const expenseDiscount=Math.min(baseExpense,contributionTotal(pid,'expense_discount'));
+  const expense=Math.max(0,baseExpense-expenseDiscount);
+  const contributions=utilityDiscount+expenseDiscount;
+  const net=Math.max(0,energy+expense-utilityDiscount);
   const raw=water>0?net/water:0;
   const autoApplied=raw>0?Math.ceil(raw):0;
   // The weekly price is automatically recalculated from live costs/contributions.
   // Existing stored waterUnitPrice is kept only as historical snapshot; autoApplied is the current value.
   const manualPeriod=(p?.manualWaterUnitPrice!=null?num(p.manualWaterUnitPrice):null);
   const applied=manualPeriod!=null?manualPeriod:autoApplied;
-  return {period:p,readings:rs,energyReadings:ers,costs:cs,waterTotal:water,energyCost:energy,extraCost:expense,contributionsTotal:contributions,netCost:net,rawPrice:raw,autoAppliedPrice:autoApplied,appliedPrice:applied,waterBreakdown:breakdown,externalWater,manualPeriodPrice:manualPeriod};
+  return {period:p,readings:rs,energyReadings:ers,costs:cs,waterTotal:water,energyCost:energy,baseExpense,expenseDiscount,extraCost:expense,utilityDiscount,contributionsTotal:contributions,netCost:net,rawPrice:raw,autoAppliedPrice:autoApplied,appliedPrice:applied,waterBreakdown:breakdown,externalWater,manualPeriodPrice:manualPeriod};
 }
 async function syncPeriodWaterPrice(pid){
   if(!can('admin','manager','accountant')) return;
@@ -425,7 +449,7 @@ async function ensureWaterSummaryForPeriod(pid){
 
 function renderDashboard(){
   setTitle('الرئيسية','');const periods=latestPeriods(),latest=periods[0];const subs=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');const totals=latest?currentTotals(latest.id):null;const fundRev=fundRevenueTotal(),fundOut=fundWithdrawalTotal(),fundBal=fundRev-fundOut,solarQty=solarAvailableQty();
-  $('#app').innerHTML=`<section class="welcome"><div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 220 160" role="presentation"><rect x="55" y="36" width="110" height="100" rx="8"/><rect x="76" y="16" width="68" height="120" rx="8"/><path d="M111 17v119M76 60h68M76 91h68"/><rect x="91" y="108" width="16" height="28" rx="2"/><rect x="122" y="108" width="16" height="28" rx="2"/><circle cx="111" cy="43" r="8"/></svg></div><div class="welcome-copy"><div class="kicker">عمارة الأمين • الإدارة اليومية</div><h2>أهلاً ${safe(state.user?.displayName?.split(' ')[0]||'بك')} 👋</h2><div class="welcome-actions"><button class="btn primary" id="dashNewWeek">+ افتح أسبوعًا</button><button class="btn ghost" id="dashReadings">إدخال قراءات الماء</button><button class="btn soft" id="dashFund">فتح الايرادات والصندوق</button></div></div></section>
+  $('#app').innerHTML=`<section class="welcome"><div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 220 160" role="presentation"><rect x="55" y="36" width="110" height="100" rx="8"/><rect x="76" y="16" width="68" height="120" rx="8"/><path d="M111 17v119M76 60h68M76 91h68"/><rect x="91" y="108" width="16" height="28" rx="2"/><rect x="122" y="108" width="16" height="28" rx="2"/><circle cx="111" cy="43" r="8"/></svg></div><div class="welcome-copy"><div class="kicker">عمارة الأمين • الإدارة اليومية</div><h2>أهلاً ${safe(state.user?.displayName?.split(' ')[0]||'بك')} 👋</h2><div class="welcome-actions"><button class="btn primary" id="dashNewWeek">+ افتح أسبوعًا</button><button class="btn ghost" id="dashReadings">إدخال قراءات الماء</button><button class="btn soft" id="dashFund">فتح الإيرادات و الصندوق</button></div></div></section>
   <section class="stats"><div class="stat"><div class="stat-label">السكان النشطون</div><div class="stat-value">${fmt(subs.length,0)}</div><div class="stat-foot">مشترك داخل النظام</div></div><div class="stat"><div class="stat-label">آخر أسبوع</div><div class="stat-value">${latest?fmtDate(latest.startDate):'—'}</div><div class="stat-foot">${latest?statusBadge(latest.status||'Draft'):'لا يوجد'}</div></div><div class="stat"><div class="stat-label">رصيد صندوق العمارة</div><div class="stat-value">${money(fundBal)}</div><div class="stat-foot">إيرادات ${money(fundRev)} − سحب ${money(fundOut)}</div></div><div class="stat"><div class="stat-label">السولار المتبقي</div><div class="stat-value">${fmt(solarQty,3)} لتر</div><div class="stat-foot">دفعات السولار − المبيعات</div></div></section><section class="stats"><div class="stat"><div class="stat-label">استهلاك المياه</div><div class="stat-value">${totals?fmt(totals.waterTotal,3):'—'}</div><div class="stat-foot">كوب / م³</div></div><div class="stat"><div class="stat-label">سعر الكوب</div><div class="stat-value">${totals&&totals.appliedPrice?money(totals.appliedPrice):'—'}</div><div class="stat-foot">بعد رفع السعر للعدد الصحيح</div></div><div class="stat"><div class="stat-label">مجموع المديونية</div><div class="stat-value">${money(subs.reduce((a,s)=>a+num(subscriberRow(s).debt),0))}</div><div class="stat-foot">إجمالي المديونية الحالية للسكان</div></div><div class="stat"><div class="stat-label">حالة الحساب</div><div class="stat-value">${latest?'جاهز':'ابدأ'}</div><div class="stat-foot">${latest?'راجع الأسبوع الحالي':'افتح أول أسبوع'}</div></div></section>
   <section class="grid-2"><div class="panel"><div class="panel-head"><div><h2>طريقة إدخال البيانات</h2></div></div><div class="workflow-grid"><div class="workflow-card"><div class="w-num">١</div><h3>سجّل الكهرباء</h3></div><div class="workflow-card"><div class="w-num">٢</div><h3>سجّل الماء</h3></div><div class="workflow-card"><div class="w-num">٣</div><h3>احسب سعر الكوب</h3></div><div class="workflow-card"><div class="w-num">٤</div><h3>وزّع على السكان</h3></div></div></div><div class="panel"><div class="panel-head"><div><h2>آخر أسبوع</h2></div></div>${latest?`<button class="latest" id="dashLatest"><div class="latest-date">${fmtDate(latest.startDate)}</div><div class="latest-main"><b>${safe(latest.label||'أسبوع')}</b><span>${statusBadge(latest.status||'Draft')}</span></div><span class="arrow">←</span></button>`:empty('لا يوجد أسبوع بعد','ابدأ بفتح أول أسبوع.')}</div></section>
   `;
@@ -572,7 +596,7 @@ function renderCosts(){
   setTitle('المصاريف والطوارئ','');
   const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();const rows=p?costsForPeriod(p.id).filter(x=>x.direction!=='credit'):[];
   const totalExpense=rows.reduce((a,x)=>a+num(x.amount),0);
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>مصاريف وخدمات الأسبوع</h2></div><button class="btn primary" id="addCost">+ إضافة مصروف / خدمة</button></div>${!p?empty('افتح أسبوعًا أولًا','المصاريف والخدمات مرتبطة بالأسبوع.'): `<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div><div class="money-grid"><div class="money-card"><small>إجمالي المصاريف</small><b>${money(totalExpense)}</b></div><div class="money-card"><small>المساهمات والخصومات</small><b>${money((state.data.contributions||[]).filter(x=>x.periodId===p.id).reduce((a,x)=>a+num(x.amount),0))}</b></div><div class="money-card"><small>صافي التشغيل</small><b>${money(totalExpense-(state.data.contributions||[]).filter(x=>x.periodId===p.id).reduce((a,x)=>a+num(x.amount),0))}</b></div></div><div class="section-note" style="margin-top:13px"><b>التوزيع:</b> اختر على كل ساكن، أو اقسم على عدد تحدده، أو مبلغًا ثابتًا للشخص الواحد. المولد الخارجي يعمل بنفس النظام.</div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th><th>التوزيع</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(c.type||'—')}</td><td>${safe(c.description||'—')}</td><td class="strong">${money(c.amount)}</td><td>${c.allocationLabel?safe(c.allocationLabel):'—'}</td><td><div class="row-actions"><button class="mini" data-edit-cost="${c.id}">تعديل</button>${can('admin','manager')?`<button class="mini red" data-delete-cost="${c.id}">حذف</button>`:''}</div></td></tr>`).join(''):`<tr><td colspan="6">${empty('لا توجد مصاريف','ابدأ بإضافة خدمة الحارس أو مولد خارجي أو أي مصروف.')}</td></tr>`}</tbody></table></div>`}</section>`;
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>مصاريف وخدمات الأسبوع</h2></div><button class="btn primary" id="addCost">+ إضافة مصروف / خدمة</button></div>${!p?empty('افتح أسبوعًا أولًا','المصاريف والخدمات مرتبطة بالأسبوع.'): `<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div><div class="money-grid"><div class="money-card"><small>إجمالي المصاريف</small><b>${money(totalExpense)}</b></div><div class="money-card"><small>خصم من المصاريف</small><b>${money(contributionTotal(p.id,'expense_discount'))}</b></div><div class="money-card"><small>صافي المصاريف</small><b>${money(Math.max(0,totalExpense-contributionTotal(p.id,'expense_discount')))}</b></div></div><div class="section-note" style="margin-top:13px"><b>التوزيع:</b> اختر على كل ساكن، أو اقسم على عدد تحدده، أو مبلغًا ثابتًا للشخص الواحد. المولد الخارجي يعمل بنفس النظام.</div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th><th>التوزيع</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(c.type||'—')}</td><td>${safe(c.description||'—')}</td><td class="strong">${money(c.amount)}</td><td>${c.allocationLabel?safe(c.allocationLabel):'—'}</td><td><div class="row-actions"><button class="mini" data-edit-cost="${c.id}">تعديل</button>${can('admin','manager')?`<button class="mini red" data-delete-cost="${c.id}">حذف</button>`:''}</div></td></tr>`).join(''):`<tr><td colspan="6">${empty('لا توجد مصاريف','ابدأ بإضافة خدمة الحارس أو مولد خارجي أو أي مصروف.')}</td></tr>`}</tbody></table></div>`}</section>`;
   $('#addCost').onclick=()=>showCostForm(p?.id);$('#periodSelect')?.addEventListener('change',e=>navigate('costs',e.target.value));$$('[data-edit-cost]').forEach(b=>b.onclick=()=>showCostForm(p.id,b.dataset.editCost));$$('[data-delete-cost]').forEach(b=>b.onclick=()=>deleteCost(b.dataset.deleteCost));
 }
 function allocationPreview(kind,amount,perPerson,count){
@@ -605,19 +629,45 @@ function showCostForm(pid,id){
 }
 
 function renderContributions(){
-  setTitle('المساهمات والخصومات','سجّل المساهمات التي تقلل تكلفة تشغيل الأسبوع قبل حساب سعر الكوب.');
-  if(!can('admin','manager','accountant')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','لا تملك صلاحية تسجيل المساهمات.')}</section>`;return;}
-  const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();const rows=p?(state.data.contributions||[]).filter(x=>x.periodId===p.id):[];const total=rows.reduce((a,x)=>a+num(x.amount),0);
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>المساهمات والخصومات</h2></div><button class="btn primary" id="addContribution">+ إضافة مساهمة / خصم</button></div>${!p?empty('افتح أسبوعًا أولًا',''): `<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div><div class="money-grid"><div class="money-card"><small>إجمالي الخصومات</small><b>${money(total)}</b></div></div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>البيان</th><th>المبلغ</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(c.description||'—')}</td><td class="strong">${money(c.amount)}</td><td><div class="row-actions"><button class="mini" data-edit-contribution="${c.id}">تعديل</button>${can('admin','manager')?`<button class="mini red" data-delete-contribution="${c.id}">حذف</button>`:''}</div></td></tr>`).join(''):`<tr><td colspan="4">${empty('لا توجد مساهمات','يمكن تسجيل أي مساهمة/خصم من هنا.')}</td></tr>`}</tbody></table></div>`}</section>`;
-  $('#addContribution').onclick=()=>showContributionForm(p?.id);$('#periodSelect')?.addEventListener('change',e=>navigate('contributions',e.target.value));$$('[data-edit-contribution]').forEach(b=>b.onclick=()=>showContributionForm(p.id,b.dataset.editContribution));$$('[data-delete-contribution]').forEach(b=>b.onclick=()=>deleteContribution(b.dataset.deleteContribution));
+  setTitle('المساهمات والخصومات','اختر بوضوح أين تذهب المساهمة: الماء والكهرباء أو المصاريف أو صندوق العمارة.');
+  const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();
+  const rows=p?contributionRowsForPeriod(p.id):[];
+  const totals={utility:contributionTotal(p?.id,'utility_discount'),expense:contributionTotal(p?.id,'expense_discount'),fund:contributionTotal(p?.id,'fund_contribution')};
+  const canManage=can('admin','manager','accountant');
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>المساهمات والخصومات</h2><p class="muted">المساهمة الافتراضية تخفف تكلفة الماء والكهرباء فقط. مساهمة الصندوق تدخل الإيرادات والصندوق فقط. خصم المصاريف يقلل المصاريف فقط.</p></div>${canManage?'<button class="btn primary" id="addContribution">+ إضافة مساهمة</button>':''}</div>${!p?empty('افتح أسبوعًا أولًا',''): `<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div><div class="money-grid"><div class="money-card"><small>خصم من الماء والكهرباء</small><b>${money(totals.utility)}</b></div><div class="money-card"><small>خصم من المصاريف</small><b>${money(totals.expense)}</b></div><div class="money-card"><small>مساهمة للصندوق</small><b>${money(totals.fund)}</b></div></div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td><span class="badge info">${safe(contributionLabel(c))}</span></td><td>${safe(c.description||'—')}</td><td class="strong">${money(c.amount)}</td><td>${canManage?`<div class="row-actions"><button class="mini" data-edit-contribution="${c.id}">تعديل</button>${can('admin','manager')?`<button class="mini red" data-delete-contribution="${c.id}">حذف</button>`:''}</div>`:'—'}</td></tr>`).join(''):`<tr><td colspan="5">${empty('لا توجد مساهمات','يمكن تسجيل النوع المناسب من هنا.')}</td></tr>`}</tbody></table></div>`}</section>`;
+  $('#addContribution')?.addEventListener('click',()=>showContributionForm(p?.id));$('#periodSelect')?.addEventListener('change',e=>navigate('contributions',e.target.value));$$('[data-edit-contribution]').forEach(b=>b.onclick=()=>showContributionForm(p.id,b.dataset.editContribution));$$('[data-delete-contribution]').forEach(b=>b.onclick=()=>deleteContribution(b.dataset.deleteContribution));
 }
 function showContributionForm(pid,id){
   if(!can('admin','manager','accountant')){toast('المساهمات مخصصة للإدارة والمحاسبة','error');return;}
   const c=id?(state.data.contributions||[]).find(x=>x.id===id):null;
-  openModal(`<h2>${c?'تعديل مساهمة':'إضافة مساهمة / خصم'}</h2><p class="modal-lead">القيمة هنا تقلل من تكلفة التشغيل قبل حساب سعر الكوب.</p><div class="form-grid"><div class="field"><label>التاريخ</label><input id="xDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="xAmount" type="number" min="0" step="0.01" value="${c?.amount??''}"></div><div class="field full"><label>البيان</label><input id="xDesc" value="${safe(c?.description||'مساهمة / خصم')}"></div></div><div class="actions"><button class="btn primary" id="saveContribution">حفظ</button><button class="btn ghost" id="cancelContribution">إلغاء</button></div>`);
-  $('#cancelContribution').onclick=closeModal;$('#saveContribution').onclick=async()=>{const amount=num($('#xAmount').value);if(amount<=0){toast('اكتب مبلغًا صحيحًا','error');return;}const data={periodId:pid,date:$('#xDate').value,amount,description:$('#xDesc').value.trim()||'مساهمة / خصم',createdBy:c?.createdBy||state.user.uid,updatedAt:serverTimestamp()};if(c)await updateDoc(orgDoc('contributions',id),data);else{const r=doc(orgCollection('contributions'));await setDoc(r,{...data,createdAt:serverTimestamp()});}state.loaded=false;await loadData(true);await syncPeriodWaterPrice(pid);closeModal();renderContributions();toast(c?'تم تعديل المساهمة وتم تحديث سعر الكوب':'تمت إضافة المساهمة وتم تحديث سعر الكوب');};
+  const type=contributionType(c);
+  openModal(`<h2>${c?'تعديل مساهمة':'إضافة مساهمة'}</h2><p class="modal-lead">حدد المسار المحاسبي للمبلغ قبل الحفظ حتى لا يختلط الصندوق مع تكلفة الماء أو المصاريف.</p><div class="form-grid"><div class="field full"><label>نوع المساهمة</label><select id="xType"><option value="utility_discount" ${type==='utility_discount'?'selected':''}>خصم من الماء والكهرباء — الافتراضي</option><option value="expense_discount" ${type==='expense_discount'?'selected':''}>خصم من المصاريف</option><option value="fund_contribution" ${type==='fund_contribution'?'selected':''}>مساهمة للصندوق</option></select></div><div class="field"><label>التاريخ</label><input id="xDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="xAmount" type="number" min="0" step="0.01" value="${c?.amount??''}"></div><div class="field full"><label>البيان</label><input id="xDesc" value="${safe(c?.description||'مساهمة')}" placeholder="مثال: مساهمة من أحد السكان"></div></div><div class="section-note" id="contributionPathNote"></div><div class="actions"><button class="btn primary" id="saveContribution">حفظ</button><button class="btn ghost" id="cancelContribution">إلغاء</button></div>`);
+  const updateNote=()=>{const t=$('#xType').value;$('#contributionPathNote').innerHTML=t==='fund_contribution'?'<b>المسار:</b> ستضاف القيمة مباشرة إلى الإيرادات و الصندوق ولن تُخصم من الماء أو المصاريف.':t==='expense_discount'?'<b>المسار:</b> ستخصم القيمة من المصاريف الداخلة في الحساب ولن تُضاف للصندوق.':'<b>المسار:</b> ستخفف صافي تكلفة الماء والكهرباء قبل حساب سعر الكوب ولن تُضاف للصندوق.';};
+  $('#xType').onchange=updateNote;updateNote();$('#cancelContribution').onclick=closeModal;
+  $('#saveContribution').onclick=async()=>{
+    const amount=num($('#xAmount').value),date=$('#xDate').value,type=$('#xType').value,description=$('#xDesc').value.trim()||'مساهمة';
+    if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
+    const data={periodId:pid,date,amount,description,contributionType:type,createdBy:c?.createdBy||state.user.uid,updatedAt:serverTimestamp()};
+    const batch=writeBatch(db),ref=c?orgDoc('contributions',id):doc(orgCollection('contributions'));
+    if(c) batch.update(ref,data); else batch.set(ref,{...data,createdAt:serverTimestamp()});
+    const oldFund=c&&contributionType(c)==='fund_contribution';
+    const oldRevenueId=c?.fundRevenueId||null;
+    if(oldFund&&oldRevenueId) batch.delete(orgDoc('fundRevenues',oldRevenueId));
+    if(type==='fund_contribution'){
+      const revRef=oldRevenueId?orgDoc('fundRevenues',oldRevenueId):doc(orgCollection('fundRevenues'));
+      const revData={type:'مساهمة للصندوق',date,amount,description,notes:'مساهمة مخصصة لصندوق العمارة',source:'contribution',contributionId:ref.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid};
+      if(oldRevenueId) batch.set(revRef,revData,{merge:true}); else batch.set(revRef,{...revData,createdAt:serverTimestamp()});
+      data.fundRevenueId=revRef.id;
+      if(c) batch.update(ref,{fundRevenueId:revRef.id}); else batch.update(ref,{fundRevenueId:revRef.id});
+    } else if(c?.fundRevenueId){ batch.update(ref,{fundRevenueId:null}); }
+    await batch.commit();state.loaded=false;await loadData(true);await syncPeriodWaterPrice(pid);closeModal();renderContributions();toast(c?'تم تعديل المساهمة':'تمت إضافة المساهمة');
+  };
 }
-async function deleteContribution(id){if(!can('admin','manager')){toast('الحذف مخصص للمديرين','error');return;}const c=(state.data.contributions||[]).find(x=>x.id===id);if(!c)return;if(!confirm(`حذف المساهمة «${c.description||''}» بمبلغ ${money(c.amount)}؟`))return;await deleteDoc(orgDoc('contributions',id));removeLocal('contributions',id);await syncPeriodWaterPrice(c.periodId);toast('تم حذف المساهمة وتم تحديث سعر الكوب');renderContributions();}
+async function deleteContribution(id){
+  if(!can('admin','manager')){toast('الحذف مخصص للمديرين','error');return;}
+  const c=(state.data.contributions||[]).find(x=>x.id===id);if(!c)return;if(!confirm(`حذف المساهمة «${c.description||''}» بمبلغ ${money(c.amount)}؟`))return;
+  const batch=writeBatch(db);batch.delete(orgDoc('contributions',id));if(c.fundRevenueId)batch.delete(orgDoc('fundRevenues',c.fundRevenueId));await batch.commit();removeLocal('contributions',id);await loadData(true);await syncPeriodWaterPrice(c.periodId);toast('تم حذف المساهمة وتحديث المسار المالي');renderContributions();
+}
 
 function renderSubscribers(){
   setTitle('السكان والوحدات','حدد البنايات والوحدات من اليمين، والسكان من اليسار. التعديل والحذف للمديرين فقط.');
@@ -942,23 +992,24 @@ function showDebtForm(id){
 // Reliable Excel exports
 // =========================
 function downloadCsvFallback(rows,file){
-  const safeRows=rows.length?rows:[{}];
-  const head=Object.keys(safeRows[0]);
-  const csv='\ufeff'+[head.join(','),...safeRows.map(r=>head.map(k=>`"${String(r[k]??'').replaceAll('\"','\"\"')}"`).join(','))].join('\r\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.replace(/\.xlsx$/i,'.csv');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  toast('تم تنزيل ملف CSV قابل للفتح في Excel');
+  const safeRows=rows.length?rows:[{}],head=Object.keys(safeRows[0]);
+  const csv='\ufeff'+[head.join(','),...safeRows.map(r=>head.map(k=>`"${String(r[k]??'').replaceAll('"','""')}"`).join(','))].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=file.replace(/\.xlsx$/i,'.csv');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('تم تنزيل ملف CSV قابل للفتح في Excel');
+}
+function excelCellStyle(isHeader=false,align='right'){
+  return isHeader?{font:{name:'Arial',sz:11,bold:true,color:{rgb:'FFFFFFFF'}},fill:{fgColor:{rgb:'155E54'}},alignment:{horizontal:'center',vertical:'center',wrapText:true,readingOrder:2},border:{top:{style:'thin',color:{rgb:'D5E2DE'}},bottom:{style:'thin',color:{rgb:'D5E2DE'}},left:{style:'thin',color:{rgb:'D5E2DE'}},right:{style:'thin',color:{rgb:'D5E2DE'}}}}:{font:{name:'Arial',sz:10,color:{rgb:'183734'}},alignment:{horizontal:align,vertical:'center',wrapText:true,readingOrder:2},border:{top:{style:'thin',color:{rgb:'E0E7E4'}},bottom:{style:'thin',color:{rgb:'E0E7E4'}},left:{style:'thin',color:{rgb:'E0E7E4'}},right:{style:'thin',color:{rgb:'E0E7E4'}}}};
 }
 function exportXlsx(rows,sheet,file){
   const data=Array.isArray(rows)?rows:[];
   if(window.XLSX?.utils){
     try{
-      const wb=window.XLSX.utils.book_new();
-      const ws=window.XLSX.utils.json_to_sheet(data.length?data:[{}],{skipHeader:false});
-      window.XLSX.utils.book_append_sheet(wb,ws,String(sheet||'تقرير').slice(0,31));
-      window.XLSX.writeFile(wb,file);
-      toast('تم تنزيل ملف Excel');
-      return;
+      const wb=window.XLSX.utils.book_new();wb.Props={Title:String(sheet||'تقرير'),Subject:'تقرير عمارة الأمين',Author:'عمارة الأمين'};wb.Workbook={Views:[{RTL:true}]};
+      const headers=data.length?Object.keys(data[0]):['البيان'];
+      const aoa=[headers,...data.map(r=>headers.map(k=>r[k]??''))];
+      const ws=window.XLSX.utils.aoa_to_sheet(aoa);ws['!rtl']=true;ws['!freeze']={xSplit:0,ySplit:1};ws['!autofilter']={ref:window.XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(0,aoa.length-1),c:Math.max(0,headers.length-1)}})};
+      ws['!cols']=headers.map(h=>({wch:Math.min(32,Math.max(12,String(h).length+5))}));ws['!rows']=[{hpt:24},...data.map(()=>({hpt:20}))];
+      for(let r=0;r<aoa.length;r++)for(let c=0;c<headers.length;c++){const addr=window.XLSX.utils.encode_cell({r,c});const cell=ws[addr];if(cell)cell.s=excelCellStyle(r===0,r===0?'center':'right');}
+      window.XLSX.utils.book_append_sheet(wb,ws,String(sheet||'تقرير').slice(0,31));window.XLSX.writeFile(wb,file);toast('تم تنزيل ملف Excel منسق');return;
     }catch(e){console.error('Excel export failed',e);}
   }
   downloadCsvFallback(data,file);
@@ -966,23 +1017,10 @@ function exportXlsx(rows,sheet,file){
 function subscriberExportRows(rows){return rows.filter(s=>s.active!==false).map(s=>{const u=unitForSub(s);return{الكود:s.code||'',الاسم:s.name||'',النوع:s.type||'',الهاتف:s.phone||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',المديونية:subscriberRow(s).debt??0};});}
 function exportSubscribers(rows){exportXlsx(subscriberExportRows(rows||state.data.subscribers||[]),'السكان','سكان_عمارة_الأمين.xlsx');}
 function exportPayments(rows){exportXlsx((rows||[]).map(p=>({التاريخ:p.paymentDate||'',الأسبوع:periodById(p.periodId)?.label||'',الساكن:(state.data.subscribers||[]).find(s=>sameId(s.id,p.subscriberId))?.name||'—',المبلغ:p.amount??0,الطريقة:p.method||'',الإيصال:p.receiptNumber||'',الملاحظة:p.note||''})),'الدفعات','دفعات_عمارة_الأمين.xlsx');}
-function exportPeriod(pid){
-  const p=periodById(pid);
-  const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>sameId(x.id,r.meterId));const s=subscriberByMeter(m);const u=s?unitForSub(s):null;return{الكود:s?.code||'',الاسم:s?.name||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',السحب:r.consumption??'',سعر_الكوب:r.unitPrice??p?.waterUnitPrice??'',قيمة_المياه:r.chargeAmount??''};});
-  exportXlsx(rows,'قراءات الماء',`قراءات_الماء_${p?.startDate||pid}.xlsx`);
-}
-function exportEnergy(pid){
-  const rows=energyForPeriod(pid).map(r=>{const src=(state.data.sources||[]).find(s=>sameId(s.id,r.sourceId));const consumption=r.consumption??(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null);return{الأسبوع:periodById(pid)?.label||'',المصدر:src?.name||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',الاستهلاك:consumption??'',سعر_الكيلو:r.pricePerKwh??'',التكلفة:r.cost??(consumption!=null&&r.pricePerKwh!=null?consumption*num(r.pricePerKwh):'')};});
-  exportXlsx(rows,'الكهرباء',`كهرباء_${periodById(pid)?.startDate||pid}.xlsx`);
-}
+function exportPeriod(pid){const p=periodById(pid);const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>sameId(x.id,r.meterId));const ss=subscriberByMeter(m);const u=ss?unitForSub(ss):null;return{الكود:ss?.code||'',الاسم:ss?.name||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',السحب:r.consumption??'',سعر_الكوب:r.unitPrice??p?.waterUnitPrice??'',قيمة_المياه:r.chargeAmount??''};});exportXlsx(rows,'قراءات الماء',`قراءات_الماء_${p?.startDate||pid}.xlsx`);}
+function exportEnergy(pid){const rows=energyForPeriod(pid).map(r=>{const src=(state.data.sources||[]).find(s=>sameId(s.id,r.sourceId));const consumption=r.consumption??(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null);return{الأسبوع:periodById(pid)?.label||'',المصدر:src?.name||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',الاستهلاك:consumption??'',سعر_الكيلو:r.pricePerKwh??'',التكلفة:r.cost??(consumption!=null&&r.pricePerKwh!=null?consumption*num(r.pricePerKwh):'')};});exportXlsx(rows,'الكهرباء',`كهرباء_${periodById(pid)?.startDate||pid}.xlsx`);}
 function exportBalances(rows){exportXlsx((rows||[]).filter(s=>s.type!=='خارجي'&&s.active!==false).map(s=>({الكود:s.code||'',الاسم:s.name||'',البناية:s.buildingName||unitForSub(s)&&buildingName(unitForSub(s).buildingId)||'—',الوحدة:s.unitCode||unitForSub(s)?.code||'—',المديونية:s.debt??s.balance??0})),'المديونيات','مديونيات_عمارة_الأمين.xlsx');}
-function exportSummary(pid){
-  const t=currentTotals(pid),p=t.period;
-  const rows=[{البيان:'الأسبوع',القيمة:p?.label||''},{البيان:'من',القيمة:p?.startDate||''},{البيان:'إلى',القيمة:p?.endDate||''},{البيان:'إجمالي استهلاك المياه',القيمة:t.waterTotal},{البيان:'تكلفة الكهرباء',القيمة:t.energyCost},{البيان:'مصاريف التشغيل الداخلة في سعر الماء',القيمة:t.extraCost},{البيان:'المساهمات والخصومات',القيمة:t.contributionsTotal},{البيان:'صافي التكلفة',القيمة:t.netCost},{البيان:'السعر الخام للكوب',القيمة:t.rawPrice},{البيان:'السعر المعتمد للكوب',القيمة:t.appliedPrice}];
-  for(const b of t.waterBreakdown.buildings) rows.push({البيان:`استهلاك ${b.name}`,القيمة:b.total});
-  rows.push({البيان:'استهلاك الخارجي',القيمة:t.externalWater});
-  exportXlsx(rows,'ملخص الحساب',`ملخص_الحساب_${p?.startDate||pid}.xlsx`);
-}
+function exportSummary(pid){const t=currentTotals(pid),p=t.period;const rows=[{البيان:'الأسبوع',القيمة:p?.label||''},{البيان:'من',القيمة:p?.startDate||''},{البيان:'إلى',القيمة:p?.endDate||''},{البيان:'إجمالي استهلاك المياه',القيمة:t.waterTotal},{البيان:'تكلفة الكهرباء',القيمة:t.energyCost},{البيان:'المصاريف الأساسية',القيمة:t.baseExpense},{البيان:'خصم من المصاريف',القيمة:t.expenseDiscount},{البيان:'خصم من الماء والكهرباء',القيمة:t.utilityDiscount},{البيان:'مساهمة للصندوق',القيمة:contributionTotal(pid,'fund_contribution')},{البيان:'صافي التكلفة',القيمة:t.netCost},{البيان:'السعر الخام للكوب',القيمة:t.rawPrice},{البيان:'السعر المعتمد للكوب',القيمة:t.appliedPrice}];for(const b of t.waterBreakdown.buildings)rows.push({البيان:`استهلاك ${b.name}`,القيمة:b.total});rows.push({البيان:'استهلاك الخارجي',القيمة:t.externalWater});exportXlsx(rows,'ملخص الحساب',`ملخص_الحساب_${p?.startDate||pid}.xlsx`);}
 
 function renderReports(){
   setTitle('التقارير والتصدير','اختر الساكن والأسبوع. التقرير والرسالة يستخدمان نفس الحساب.');
@@ -1133,73 +1171,47 @@ function renderResidentReportCard(id,weekId,fromId,toId){
   </section>`;
   $('#copyResidentMessage').onclick=async()=>{const txt=$('#residentMessageText').value;try{await navigator.clipboard.writeText(txt);toast('تم نسخ الرسالة');}catch{const ta=$('#residentMessageText');ta.select();document.execCommand('copy');toast('تم نسخ الرسالة');}};
 }
+function residentPrintHtml(source,titleText='كشف حساب'){
+  const table=source?.querySelector('.resident-ledger-table');
+  if(!table)return null;
+  const title=source.querySelector('.resident-report-head');
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(titleText)}</title><style>
+  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl}
+  body{padding:18px}.resident-report-head{margin-bottom:12px}.resident-report-head h2{margin:0 0 5px;font-size:20px}.resident-report-head p{margin:0;color:#5f6c67;font-size:11px}.balance-box{padding:10px;background:#eef6f3;border-radius:10px;display:inline-block;margin-top:8px}.balance-box span{display:block;font-size:8px;color:#6c7a76}.balance-box b{font-size:18px}.table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:5px 4px;text-align:center;vertical-align:middle;white-space:normal;word-break:break-word;line-height:1.35}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
+  </style></head><body><div>${title?title.outerHTML:''}</div>${table.outerHTML}</body></html>`;
+}
 function printResidentReport(){
   const source=document.getElementById('resident-report-card-data');if(!source){toast('اعرض الكشف أولًا','error');return;}
-  const table=source.querySelector('.resident-ledger-table');if(!table){toast('تعذر العثور على جدول الكشف','error');return;}
-  const title=source.querySelector('.resident-report-head');
-  const w=window.open('','_blank','width=1400,height=900');if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}
-  w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>كشف حساب</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#183734}h2{margin:0 0 6px}.meta{margin-bottom:18px;color:#4f6662}.table{width:100%;border-collapse:collapse;font-size:12px}.table th,.table td{border:1px solid #ccd8d5;padding:8px;text-align:center}.table th{background:#edf5f2}.table td:first-child{text-align:right}@media print{@page{size:A4 landscape;margin:10mm}button{display:none}}</style></head><body><div>${title?title.outerHTML:''}</div>${table.outerHTML}<script>window.onload=()=>{window.print();}</script></body></html>`);w.document.close();}
-function buildPdfHostFromElement(source, s, fromDate, toDate){
-  const wrap=source?.querySelector('.resident-ledger-table');
-  if(!wrap)return null;
-  const table=wrap.querySelector('table')?.cloneNode(true);
-  if(!table)return null;
-  table.style.cssText='width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8px!important;direction:rtl!important;';
-  table.querySelectorAll('th,td').forEach(el=>{
-    el.style.cssText+='padding:5px 4px!important;border:1px solid #cdd9d6!important;text-align:center!important;vertical-align:middle!important;white-space:normal!important;word-break:break-word!important;line-height:1.35!important;';
-  });
-  const widths=['15%','9%','9%','9%','9%','11%','13%','9%','16%'];
-  const cg=document.createElement('colgroup');
-  widths.forEach(w=>{const c=document.createElement('col');c.style.width=w;cg.appendChild(c);});
-  table.insertBefore(cg,table.firstChild);
-  const host=document.createElement('div');
-  host.dir='rtl';
-  host.style.cssText='position:fixed;left:0;top:0;width:1120px;background:#fff;padding:24px;visibility:visible;opacity:1;pointer-events:none;direction:rtl;font-family:Arial,sans-serif;color:#183734;z-index:999999;';
-  host.innerHTML=`<div style="font-size:24px;font-weight:800;margin-bottom:8px">كشف حساب الساكن</div><div style="font-size:17px;font-weight:700;margin-bottom:4px">${safe(s?.name||'الساكن')} — ${safe(subscriberRow(s).unitCode||'')}</div><div style="font-size:11px;color:#5f6c67;margin-bottom:16px">من ${safe(fmtDate(fromDate)||'الأقدم')} إلى ${safe(fmtDate(toDate)||'الأحدث')}</div>`;
-  host.appendChild(table);
-  document.body.appendChild(host);
-  return host;
+  const html=residentPrintHtml(source);if(!html){toast('تعذر العثور على جدول الكشف','error');return;}
+  const w=window.open('','_blank','width=1500,height=900');if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}
+  w.document.open();w.document.write(html.replace('</body>','<script>window.onload=()=>{window.focus();setTimeout(()=>window.print(),150);};</script></body>'));w.document.close();
 }
 function printReportElement(source){
-  if(!source){toast('اعرض الكشف أولًا','error');return;}
-  const table=source.querySelector('.resident-ledger-table');
-  if(!table){toast('تعذر العثور على جدول الكشف','error');return;}
-  const title=source.querySelector('.resident-report-head');
-  const w=window.open('','_blank','width=1500,height=900');
-  if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}
-  w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>كشف حساب</title><style>body{font-family:Arial,sans-serif;padding:18px;color:#183734}h2{margin:0 0 6px;font-size:20px}.table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:5px 4px;text-align:center;vertical-align:middle;white-space:normal;word-break:break-word}.table th{background:#edf5f2}.table td:first-child{text-align:right}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}</style></head><body><div>${title?title.outerHTML:''}</div>${table.outerHTML}</body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(),250);
+  const html=residentPrintHtml(source);if(!html){toast('اعرض الكشف أولًا','error');return;}
+  const w=window.open('','_blank','width=1500,height=900');if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}
+  w.document.open();w.document.write(html.replace('</body>','<script>window.onload=()=>{window.focus();setTimeout(()=>window.print(),150);};</script></body>'));w.document.close();
 }
 async function downloadReportElementPdf(source,s,periods){
   if(!source){toast('اعرض الكشف أولًا','error');return;}
   if(!window.html2pdf){toast('مكوّن PDF غير محمل. حدّث الصفحة وجرب مرة ثانية.','error');return;}
-  const ordered=[...(periods||[])].sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate)));
-  const host=buildPdfHostFromElement(source,s,ordered[0]?.startDate,ordered.at(-1)?.endDate);
-  if(!host){toast('تعذر العثور على جدول الكشف','error');return;}
+  const html=residentPrintHtml(source,'كشف حساب');if(!html){toast('تعذر العثور على جدول الكشف','error');return;}
+  const iframe=document.createElement('iframe');iframe.style.cssText='position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;border:0;opacity:0';document.body.appendChild(iframe);
   try{
-    const filename=`كشف_حساب_${String(s?.name||'ساكن').replace(/[\\/:*?"<>|]+/g,'_')}.pdf`;
-    await html2pdf().set({
-      margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},
-      html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,width:1120,windowWidth:1120,scrollX:0,scrollY:0},
-      jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},
-      pagebreak:{mode:['css','legacy'],before:'.pdf-page-break',avoid:['tr']}
-    }).from(host).save();
+    const idoc=iframe.contentDocument;idoc.open();idoc.write(html);idoc.close();
+    await new Promise(resolve=>setTimeout(resolve,350));
+    try{await idoc.fonts?.ready;}catch{}
+    const host=idoc.body;const filename=`كشف_حساب_${String(s?.name||'ساكن').replace(/[\\/:*?"<>|]+/g,'_')}.pdf`;
+    await window.html2pdf().set({margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,scrollX:0,scrollY:0},jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},pagebreak:{mode:['css','legacy'],avoid:['tr']}}).from(host).save();
     toast('تم تنزيل كشف الحساب PDF');
   }catch(e){console.error(e);toast('تعذر إنشاء PDF','error');}
-  finally{host.remove();}
+  finally{iframe.remove();}
 }
 async function downloadResidentPdf(id,weekId,fromId,toId){
-  const source=document.getElementById('resident-report-card-data');
-  const periods=residentReportPeriods(fromId,toId);
-  const s=(state.data.subscribers||[]).find(x=>x.id===id);
-  if(!source||!s){toast('اعرض الكشف أولًا','error');return;}
-  await downloadReportElementPdf(source,s,periods);
+  const source=document.getElementById('resident-report-card-data');const periods=residentReportPeriods(fromId,toId);const ss=(state.data.subscribers||[]).find(x=>x.id===id);if(!source||!ss){toast('اعرض الكشف أولًا','error');return;}await downloadReportElementPdf(source,ss,periods);
 }
 
 function renderSettings(){
-  setTitle('الإعدادات والصلاحيات','إدارة المستخدمين والحذف الآمن.');const members=state.data.members||[];const periods=latestPeriods();
+  setTitle('الإعدادات والصلاحيات','إدارة المستخدمين والحذف الآمن.');if(!can('admin')){$('#app').innerHTML=`<section class="panel">${empty('الإعدادات للمدير فقط','هذه الصفحة متاحة لمدير النظام فقط.')}</section>`;return;}const members=state.data.members||[];const periods=latestPeriods();
   $('#app').innerHTML=`<section class="settings-grid"><div class="panel"><div class="panel-head"><div><h2>حسابك</h2></div></div><div class="member-row"><div class="avatar">${safe((state.user.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(state.user.displayName||'—')}</b><span>${safe(state.user.email||'—')} • ${roleName(state.profile.role)}</span></div></div><div class="actions"><button class="btn ghost" id="logoutSet">تسجيل الخروج</button></div></div><div class="panel"><div class="panel-head"><div><h2>المستخدمون والصلاحيات</h2></div></div><div class="members">${members.length?members.map(m=>`<div class="member-row"><div class="avatar">${safe((m.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(m.displayName||'—')}</b><span>${safe(m.email||'')}</span></div>${can('admin')?`<select data-role="${m.id}">${Object.entries(ROLES).filter(([k])=>k!=='pending').map(([k,v])=>`<option value="${k}" ${m.role===k?'selected':''}>${v}</option>`).join('')}</select><button class="mini red" data-delete-member="${m.id}">حذف</button>`:statusBadge(m.role)}</div>`).join(''):empty('لا يوجد مستخدمون','سيظهر الحساب بعد تسجيل الدخول.')}</div></div></section><section class="panel danger-panel"><div class="panel-head"><div><h2>الحذف الآمن</h2></div></div><div class="danger-actions"><select id="deletePeriod"><option value="">اختر أسبوعًا</option>${periods.map(p=>`<option value="${p.id}">${safe(p.label)} — ${fmtDate(p.startDate)}</option>`).join('')}</select><button class="btn danger" id="deletePeriodBtn">حذف الأسبوع المختار</button><button class="btn danger" id="deleteExceptSelectedBtn">حذف كل الأسابيع ما عدا المختار</button></div></section>`;
   $('#logoutSet').onclick=()=>signOut(auth);$$('[data-role]').forEach(s=>s.onchange=()=>updateRole(s.dataset.role,s.value));$$('[data-delete-member]').forEach(b=>b.onclick=()=>deleteMember(b.dataset.deleteMember));$('#deletePeriodBtn').onclick=()=>deleteWeek($('#deletePeriod').value);$('#deleteExceptSelectedBtn').onclick=()=>deleteAllExceptSelected($('#deletePeriod').value);
 }
@@ -1227,25 +1239,26 @@ function openAccount(id){
 }
 function showGuide(){
   const steps=[
-    {title:'1) الرئيسية',text:'تعطيك نظرة سريعة على آخر أسبوع، رصيد صندوق العمارة، السولار المتبقي، ومجموع مديونية السكان.',go:'dashboard'},
-    {title:'2) الأسابيع',text:'',go:'periods'},
-    {title:'3) الكهرباء',text:'أدخل القراءة السابقة والحالية لكل مصدر وسعر الكيلو، ثم احسب تكلفة الاستهلاك.',go:'energy'},
-    {title:'4) المياه',text:'أدخل قراءات السكان وقراءة الخارجي، ثم راجع الاستهلاك وسعر الكوب المعتمد.',go:'readings'},
-    {title:'5) خدمة الحارس',text:'حدد مبلغ خدمة الحارس للسكان واستثنِ من لا يدفع حسب الحاجة.',go:'guard'},
-    {title:'6) المصاريف والطوارئ',text:'سجّل المصاريف التشغيلية والطوارئ التي تدخل في حسابات السكان حسب النظام.',go:'costs'},
-    {title:'7) المساهمات',text:'أدخل المساهمات والخصومات التي تؤثر على صافي تكلفة التشغيل.',go:'contributions'},
-    {title:'8) الدفعات',text:'سجّل دفعات السكان. الدفعة تسوي مديونية الساكن ولا تتحول تلقائيًا إلى إيراد صندوق.',go:'payments'},
-    {title:'9) الديون',text:'الديون السابقة لما كان مستحقًا قبل الفترة الحالية، والتسديد يسجل من الدفعات.',go:'debts'},
-    {title:'10) السكان',text:'أضف الساكن مع البناية والوحدة. عند الإضافة يُنشأ له عداد مياه وتدخل خدمات المياه والحارس الحالية تلقائيًا حسب الخدمات المطبقة.',go:'subscribers'},
-    {title:'11) الدفعات العادية للسكان',text:'سجّل أي دفعة من صفحة الدفعات. المبلغ يؤثر على مديونية الساكن فقط.',go:'payments'},
-    {title:'12) إضافة دفعة سولار',text:'كل مرة يدخل سولار سجّل دفعة مستقلة بتاريخها وكمّيتها وبيانها.',go:'fund'},
-    {title:'13) بيع السولار',text:'عند البيع أدخل اللترات وسعر اللتر والتاريخ. تُخصم الكمية من المتاح، وتُحسب قيمة البيع تلقائيًا.',go:'fund'},
-    {title:'14) الإيرادات',text:'إضافة الإيراد لها: إيرادات سولار، إيرادات من خدمات الحارس، والإيرادات الأخرى. كل الإيرادات تذهب للصندوق فقط.',go:'fund'},
-    {title:'15) سحب من الصندوق',text:'استخدمه عندما تدفع العمارة من الصندوق بدل تحميل المبلغ على السكان. السحب ينقص رصيد الصندوق فقط.',go:'fund'},
-    {title:'16) التقارير',text:'التقارير للتصدير والحساب. وفي صفحة الإيرادات توجد طباعة منفصلة لكل جدول وملخص.',go:'reports'},
-    {title:'17) البيانات التاريخية',text:'للوصول إلى المعلومات التاريخية المحفوظة في النظام.',go:'historical'},
-    {title:'18) الإعدادات والصلاحيات',text:'لإدارة المستخدمين والصلاحيات وإعدادات النظام.',go:'settings'}
-  ];let i=0;const draw=()=>{const s=steps[i];openModal(`<div class="guide-hero"><div class="guide-topline"><span class="guide-badge">دليل الاستخدام</span><span class="guide-counter">${i+1} / ${steps.length}</span></div><h2>${safe(s.title)}</h2><p>${safe(s.text)}</p></div><div class="guide-demo"><div class="demo-title">كيف تستخدم هذا القسم</div><div class="demo-row"><span>البيانات</span><b>تُحفظ على Firebase</b></div><div class="demo-row"><span>الحسابات</span><b>منفصلة عن صندوق العمارة عند الحاجة</b></div></div><div class="guide-actions"><button class="btn ghost" id="guideClose">إغلاق</button><div class="guide-actions-right"><button class="btn ghost" id="guidePrev" ${i===0?'disabled':''}>السابق</button><button class="btn primary" id="guideDo">اذهب لهذا القسم →</button></div></div>`);$('#guideClose').onclick=closeModal;$('#guidePrev').onclick=()=>{if(i>0){i--;draw();}};$('#guideDo').onclick=()=>{closeModal();navigate(s.go);};};draw();}
+    {title:'1) الرئيسية',text:'تعرض أهم الأرقام بسرعة: آخر أسبوع، رصيد صندوق العمارة، السولار، استهلاك المياه والمديونية.',go:'dashboard'},
+    {title:'2) الأسابيع',text:'افتح أسبوعًا جديدًا أولًا. القراءات السابقة تُرحّل تلقائيًا عندما يبدأ الأسبوع.',go:'periods'},
+    {title:'3) الكهرباء',text:'أدخل القراءات السابقة والحالية وسعر الكيلو لكل مصدر ثم احفظ. تكلفة الكهرباء تدخل في حساب تكلفة التشغيل.',go:'energy'},
+    {title:'4) المياه',text:'أدخل قراءات المياه. عند إضافة ساكن جديد ينشأ له عداد ويُربط بوحدته وبنايته.',go:'readings'},
+    {title:'5) خدمة الحارس',text:'طبّق خدمة الحارس حسب النظام. عند إضافة ساكن جديد تُزامَن الخدمة الحالية تلقائيًا فقط دون تحميل تاريخ قديم.',go:'guard'},
+    {title:'6) المصاريف والطوارئ',text:'سجّل المصروف وحدد هل يدخل في سعر الكوب وهل يوزع على السكان. خصم المصاريف له مسار مستقل عن مساهمة الصندوق.',go:'costs'},
+    {title:'7) المساهمات',text:'اختر نوعًا واحدًا لكل مساهمة: خصم من الماء والكهرباء، خصم من المصاريف، أو مساهمة للصندوق. هذا يمنع خلط المبالغ بين الحسابات.',go:'contributions'},
+    {title:'8) الدفعات',text:'دفعات السكان تخفّض مديونية الساكن وتسجل كسداد فقط، ولا تدخل تلقائيًا في الإيرادات و الصندوق.',go:'payments'},
+    {title:'9) الديون السابقة',text:'سجّل الديون التي كانت مستحقة قبل الفترة الحالية، وتظهر لاحقًا في كشف الحساب.',go:'debts'},
+    {title:'10) السكان والوحدات',text:'أنشئ البناية ثم الوحدة ثم الساكن. يجب أن تكون الوحدة من نفس البناية، والنظام يحافظ على الربط ويجهز عداد المياه والخدمات الحالية.',go:'subscribers'},
+    {title:'11) الإيرادات و الصندوق',text:'إيرادات السولار والمساهمات المخصصة للصندوق والإيرادات الأخرى تزيد رصيد الصندوق. السحب منه ينقص الرصيد فقط.',go:'fund'},
+    {title:'12) التقارير',text:'استخدم عرض الكشف ثم الطباعة أو تنزيل PDF. زر التنزيل يستخدم نفس قالب الطباعة حتى تكون النتيجة مطابقة لها.',go:'reports'},
+    {title:'13) Excel',text:'ملفات Excel تُنشأ بجداول مرتبة ومروسة مع اتجاه عربي من اليمين إلى اليسار وتنسيق للصفوف والأعمدة.',go:'reports'},
+    {title:'14) البيانات التاريخية',text:'هذه الصفحة تعرض البيانات التاريخية المضمنة في النظام.',go:'historical'},
+    {title:'15) الصلاحيات',text:'المدير يدير الصلاحيات. المشاهد والساكن للعرض فقط، ولا تظهر لهم عمليات التعديل أو الحذف.',go:'settings'}
+  ];
+  let i=0;
+  const draw=()=>{const s=steps[i],last=i===steps.length-1;openModal(`<div class="guide-hero"><div class="guide-topline"><span class="guide-badge">دليل الاستخدام</span><span class="guide-counter">${i+1} / ${steps.length}</span></div><h2>${safe(s.title)}</h2><p>${safe(s.text)}</p></div><div class="guide-demo"><div class="demo-title">كيف تستخدم هذا القسم</div><div class="demo-row"><span>البيانات</span><b>تُحفظ على Firebase</b></div><div class="demo-row"><span>الإجراء</span><b>استخدم «التالي» للانتقال بين التعليمات</b></div></div><div class="guide-actions"><button class="btn ghost" id="guideClose">إغلاق</button><div class="guide-actions-right"><button class="btn ghost" id="guidePrev" ${i===0?'disabled':''}>السابق</button><button class="btn primary" id="guideNext">${last?'فتح القسم →':'التالي ←'}</button></div></div>`);$('#guideClose').onclick=closeModal;$('#guidePrev').onclick=()=>{if(i>0){i--;draw();}};$('#guideNext').onclick=()=>{if(last){closeModal();navigate(s.go);}else{i++;draw();}};};draw();
+}
+
 function renderPending(){setTitle('بانتظار الموافقة','حسابك معروف، لكن المدير لم يمنحك صلاحية بعد.');$('#app').innerHTML=`<section class="panel" style="max-width:680px;margin:50px auto;text-align:center;padding:40px"><div style="font-size:40px">⌛</div><h2>باقي موافقة المدير</h2><p class="muted">${safe(state.user?.email||'حسابك')} مسجل. بعد موافقة المدير ستظهر بيانات العمارة.</p><button class="btn primary" id="reloadPending">تحديث</button></section>`;$('#reloadPending').onclick=async()=>{try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role!=='pending'){await loadData(true);await ensureSolarBatchMigration();await ensureDefaults();await navigate('dashboard');}else toast('ما زال الحساب بانتظار موافقة المدير','error');}catch(e){toast(e?.message||'تعذر تحديث حالة الحساب','error');}};}
 
 // Global actions
@@ -1255,8 +1268,19 @@ $('#googleLogin')?.addEventListener('click',async()=>{const b=$('#auth-error');b
 getRedirectResult(auth).catch(e=>{if(e){const b=$('#auth-error');if(b){b.textContent=authFriendlyError(e)||e?.message||'تعذر تسجيل الدخول';b.classList.remove('hidden');}}});
 $('#logoutBtn')?.addEventListener('click',()=>signOut(auth));
 $('#refreshBtn')?.addEventListener('click',()=>navigate(state.view,state.periodId,true));
+function isReadOnlyRole(){return ['viewer','resident'].includes(state.profile?.role);}
+function applyReadOnlyUi(){
+  const ro=isReadOnlyRole();document.body.classList.toggle('readonly-role',ro);if(!ro)return;
+  $$('input:not([type="search"]),textarea,select').forEach(el=>{if(!el.closest('#resident-report-holder')&& !/^rep|^subSearch$|^subSort$/.test(el.id||'')) el.disabled=true;});
+  $$('button').forEach(btn=>{const id=btn.id||'',txt=(btn.textContent||'').trim();const allowed=['refreshBtn','mobileMenu','logoutBtn','logoutSet','showResidentReport','printResidentReport','downloadResidentPdf','copyResidentMessage','guideClose','guidePrev','guideNext'].includes(id)||/^rep|^subSearch$|^subSort$/.test(id)||txt.includes('↓ تنزيل')||txt.includes('🖨')||txt==='نسخ النص'||txt==='عرض الكشف'||txt==='التالي ←'||txt==='السابق';
+    const mut=/^\+|إضافة|تسجيل|حفظ|حذف|تعديل|سحب|بيع السولار|ابدأ أسبوعًا|فتح أسبوعًا|اعتماد|إعادة/.test(txt);
+    if(mut&&!allowed)btn.closest('.member-row,.panel-head,.head-actions,.actions,.danger-actions,.panel,.report-card')?.classList.add('readonly-hidden');
+    if(mut&&!allowed)btn.classList.add('readonly-hidden');
+  });
+}
+const _renderOriginal=render;render=async function(){const result=await _renderOriginal();setTimeout(applyReadOnlyUi,0);return result;};
+
 $('#mobileMenu')?.addEventListener('click',()=>$('#sidebar')?.classList.toggle('open'));
-$('#quickPaymentBtn')?.addEventListener('click',showPaymentForm);
 $('#quickPeriod')?.addEventListener('click',showPeriodForm);
 $('#guideBtn')?.addEventListener('click',()=>showGuide());
 $('#settingsBtn')?.addEventListener('click',()=>navigate('settings'));
@@ -1289,8 +1313,8 @@ async function fundUpsert(collection,id,data){if(id){await updateDoc(orgDoc(coll
 async function fundRemove(collection,id){await deleteDoc(orgDoc(collection,id));removeLocal(collection,id);}
 function fundActions(collection,id){const edit=`<button class="btn tiny ghost" data-fund-edit="${safe(collection)}:${safe(id)}">تعديل</button>`;const del=`<button class="btn tiny danger" data-fund-delete="${safe(collection)}:${safe(id)}">حذف</button>`;return `<div class="row-actions">${edit}${can('admin','manager')?del:''}</div>`;}
 function printFundSection(sourceId,title,mode='table'){const source=document.getElementById(sourceId);if(!source){toast('تعذر العثور على القسم المطلوب','error');return;}const w=window.open('','_blank','width=1400,height=900');if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}let content='';if(mode==='summary'){content=`<table class="print-table"><thead><tr><th>البند</th><th>القيمة</th></tr></thead><tbody><tr><td>إجمالي الإيرادات</td><td>${safe(money(fundRevenueTotal()))}</td></tr><tr><td>إجمالي السحب من الصندوق</td><td>${safe(money(fundWithdrawalTotal()))}</td></tr><tr><td>المتبقي في صندوق العمارة</td><td>${safe(money(fundBalance()))}</td></tr><tr><td>إجمالي دفعات السولار</td><td>${safe(fmt(solarBatchTotal(),3))} لتر</td></tr><tr><td>إجمالي مبيعات السولار</td><td>${safe(fmt(solarSoldTotal(),3))} لتر</td></tr><tr><td>رصيد السولار الحالي</td><td>${safe(fmt(solarAvailableQty(),3))} لتر</td></tr></tbody></table>`;}else{const table=source.querySelector('table');if(!table){toast('تعذر العثور على جدول القسم','error');return;}const clone=table.cloneNode(true);clone.querySelectorAll('[data-fund-edit],[data-fund-delete],.row-actions').forEach(x=>x.remove());content=clone.outerHTML;}w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(title)}</title><style>body{font-family:Arial,"Cairo",sans-serif;padding:24px;color:#183734}h1{font-size:22px;margin:0 0 16px}.print-table{width:100%;border-collapse:collapse;direction:rtl;font-size:12px}.print-table th,.print-table td{border:1px solid #cfdad6;padding:8px 10px;text-align:center;vertical-align:middle}.print-table th{background:#edf5f2;font-weight:800}.print-table td:first-child{text-align:right}@page{size:A4 landscape;margin:10mm}@media print{button{display:none!important}}</style></head><body><h1>${safe(title)}</h1>${content}<script>window.onload=()=>window.print();</script></body></html>`);w.document.close();w.focus();}
-function renderFund(){setTitle('الإيرادات وصندوق العمارة','كل الإيرادات هنا تدخل إلى صندوق العمارة فقط، ولا تُحمّل على أي ساكن ولا تدخل في حسبة المياه أو الكهرباء.');if(!can('admin','manager','accountant')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','الإيرادات والصندوق مخصصة للإدارة والحسابات.')}</section>`;return;}const revenues=fundAllRevenues(),withdrawals=fundAllWithdrawals(),totalRevenue=fundRevenueTotal(),totalWithdrawals=fundWithdrawalTotal(),balance=fundBalance(),batches=solarBatches(),sales=solarSales(),totalBatches=solarBatchTotal(),totalSold=solarSoldTotal(),available=solarAvailableQty();$('#app').innerHTML=`
-<section class="hero"><div><span class="guide-badge">حساب مستقل</span><h2>الإيرادات وصندوق العمارة</h2></div></section>
+function renderFund(){setTitle('الإيرادات و الصندوق','كل الإيرادات هنا تدخل إلى صندوق العمارة فقط، ولا تُحمّل على أي ساكن ولا تدخل في حسبة المياه أو الكهرباء.');if(!can('admin','manager','accountant')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','الإيرادات والصندوق مخصصة للإدارة والحسابات.')}</section>`;return;}const revenues=fundAllRevenues(),withdrawals=fundAllWithdrawals(),totalRevenue=fundRevenueTotal(),totalWithdrawals=fundWithdrawalTotal(),balance=fundBalance(),batches=solarBatches(),sales=solarSales(),totalBatches=solarBatchTotal(),totalSold=solarSoldTotal(),available=solarAvailableQty();$('#app').innerHTML=`
+<section class="hero"><div><span class="guide-badge">حساب مستقل</span><h2>الإيرادات و الصندوق</h2></div></section>
 <section class="panel fund-section solar-section" id="solarSection"><div class="panel-head"><div><h2>السولار — الدفعات والمبيعات</h2></div><div class="head-actions"><button class="btn primary" id="addSolarBatch">+ إضافة دفعة سولار</button><button class="btn soft" id="printSolarSummary">🖨 طباعة ملخص السولار</button></div></div><div class="money-grid"><div class="money-card"><small>إجمالي دفعات السولار</small><b>${fmt(totalBatches,3)} لتر</b></div><div class="money-card"><small>إجمالي السولار المباع</small><b>${fmt(totalSold,3)} لتر</b></div><div class="money-card"><small>السولار المتبقي</small><b>${fmt(available,3)} لتر</b></div></div>
 <div class="subpanel" id="solarBatchesSection"><div class="panel-head"><div><h3>جدول إضافة دفعات السولار</h3></div><button class="btn soft" id="printSolarBatches">🖨 طباعة الدفعات</button></div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>الكمية</th><th>البيان</th><th>الملاحظات</th><th>إجراءات</th></tr></thead><tbody>${batches.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td class="strong">${fmt(x.liters,3)} لتر</td><td>${safe(x.description||'—')}</td><td>${safe(x.notes||'—')}</td><td>${fundActions('solarBatches',x.id)}</td></tr>`).join('')||`<tr><td colspan="5">${empty('لا توجد دفعات سولار','اضغط «إضافة دفعة سولار».')}</td></tr>`}</tbody></table></div></div>
 <div class="subpanel" id="solarSalesSection"><div class="panel-head"><div><h3>جدول مبيعات السولار</h3></div><div class="head-actions"><button class="btn primary" id="addSolarSale">+ بيع السولار</button><button class="btn soft" id="printSolarSales">🖨 طباعة المبيعات</button></div></div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>الكمية المباعة</th><th>سعر اللتر</th><th>إجمالي البيع</th><th>المشتري</th><th>البيان</th><th>إجراءات</th></tr></thead><tbody>${sales.map(x=>`<tr><td>${safe(fmtDate(x.date))}</td><td class="strong">${fmt(x.liters,3)} لتر</td><td>${money(x.pricePerLiter)}</td><td class="strong">${money(x.total)}</td><td>${safe(x.buyer||'—')}</td><td>${safe(x.notes||'بيع سولار')}</td><td>${fundActions('solarSales',x.id)}</td></tr>`).join('')||`<tr><td colspan="7">${empty('لا توجد مبيعات سولار','اضغط «بيع السولار».')}</td></tr>`}</tbody></table></div></div></section>
@@ -1300,7 +1324,7 @@ function renderFund(){setTitle('الإيرادات وصندوق العمارة',
 $('#addSolarBatch').onclick=()=>showSolarBatchForm();$('#addSolarSale').onclick=()=>showSolarSaleForm();$('#addFundRevenue').onclick=()=>showFundRevenueForm();$('#addFundWithdrawal').onclick=()=>showFundWithdrawalForm();$('#printSolarBatches').onclick=()=>printFundSection('solarBatchesSection','جدول دفعات السولار');$('#printSolarSales').onclick=()=>printFundSection('solarSalesSection','جدول مبيعات السولار');$('#printSolarSummary').onclick=()=>printFundSection('solarSection','ملخص السولار','summary');$('#printFundRevenues').onclick=()=>printFundSection('fundRevenueSection','جدول إيرادات صندوق العمارة');$('#printFundWithdrawals').onclick=()=>printFundSection('fundWithdrawalSection','جدول السحب من صندوق العمارة');$('#printFundSummary').onclick=()=>printFundSection('fundSummarySection','ملخص صندوق العمارة','summary');$$('[data-fund-edit]').forEach(b=>b.onclick=()=>{const [c,id]=b.dataset.fundEdit.split(':');showFundFormFor(c,id);});$$('[data-fund-delete]').forEach(b=>b.onclick=async()=>{const [c,id]=b.dataset.fundDelete.split(':');await deleteFundRecord(c,id);});}
 function showSolarBatchForm(id=null){const row=id?fundRows('solarBatches').find(x=>x.id===id):null;openModal(`<h2>${row?'تعديل دفعة سولار':'إضافة دفعة سولار'}</h2><p class="modal-lead">هذه الدفعة تزيد كمية السولار المتوفرة فقط، ولا تسجّل إيرادًا ماليًا.</p><div class="form-grid"><div class="field"><label>التاريخ</label><input id="sbDate" type="date" value="${safe(row?.date||dateNow())}"></div><div class="field"><label>الكمية (لتر)</label><input id="sbLiters" type="number" min="0.001" step="0.001" value="${row?.liters??''}" placeholder="مثال 500"></div><div class="field full"><label>البيان</label><input id="sbDesc" value="${safe(row?.description||'')}" placeholder="مثال: دفعة سولار جديدة"></div><div class="field full"><label>الملاحظات</label><textarea id="sbNotes">${safe(row?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="sbSave">${row?'حفظ التعديل':'إضافة الدفعة'}</button><button class="btn ghost" id="sbCancel">إلغاء</button></div>`);$('#sbCancel').onclick=closeModal;$('#sbSave').onclick=async()=>{const date=$('#sbDate').value,liters=num($('#sbLiters').value),description=$('#sbDesc').value.trim(),notes=$('#sbNotes').value.trim();if(!date||liters<=0){toast('أكمل التاريخ والكمية','error');return;}const otherBatches=solarBatchTotal()-(row?num(row.liters):0),sold=solarSoldTotal();if(otherBatches+liters<sold){toast(`لا يمكن حفظ الدفعة. رصيد السولار بعد التعديل سيصبح أقل من السولار المباع (${fmt(sold,3)} لتر).`,'error');return;}await fundUpsert('solarBatches',id,{date,liters,description,notes});closeModal();toast(row?'تم تعديل دفعة السولار':'تمت إضافة دفعة السولار');renderFund();};}
 function showSolarSaleForm(id=null){const row=id?fundRows('solarSales').find(x=>x.id===id):null;const currentWithoutRow=solarAvailableQty()+(row?num(row.liters):0);openModal(`<h2>${row?'تعديل بيع سولار':'بيع السولار'}</h2><p class="modal-lead">أدخل الكمية وسعر اللتر. قيمة البيع تُضاف تلقائيًا إلى الإيرادات باسم «إيرادات سولار» وبيان «بيع سولار».</p><div class="form-grid"><div class="field"><label>التاريخ</label><input id="ssDate" type="date" value="${safe(row?.date||dateNow())}"></div><div class="field"><label>الكمية المباعة (لتر)</label><input id="ssLiters" type="number" min="0.001" step="0.001" value="${row?.liters??''}" placeholder="مثال 30"></div><div class="field"><label>سعر اللتر</label><input id="ssPrice" type="number" min="0.01" step="0.01" value="${row?.pricePerLiter??''}" placeholder="مثال 30"></div><div class="field"><label>المشتري (اختياري)</label><input id="ssBuyer" value="${safe(row?.buyer||'')}" placeholder="اسم المشتري"></div><div class="field full"><label>الملاحظات</label><textarea id="ssNotes" placeholder="ملاحظات عن البيع">${safe(row?.notes||'')}</textarea></div></div><div class="calc-preview"><span>قيمة البيع</span><b id="ssTotalPreview">${money(row?.total||0)}</b><small>المتاح للبيع: ${fmt(currentWithoutRow,3)} لتر</small></div><div class="actions"><button class="btn primary" id="ssSave">${row?'حفظ التعديل':'تسجيل البيع'}</button><button class="btn ghost" id="ssCancel">إلغاء</button></div>`);const calc=()=>{const liters=num($('#ssLiters').value),price=num($('#ssPrice').value);$('#ssTotalPreview').textContent=money(liters*price);};$('#ssLiters').oninput=calc;$('#ssPrice').oninput=calc;calc();$('#ssCancel').onclick=closeModal;$('#ssSave').onclick=async()=>{const date=$('#ssDate').value,liters=num($('#ssLiters').value),price=num($('#ssPrice').value),buyer=$('#ssBuyer').value.trim(),notes=$('#ssNotes').value.trim();if(!date||liters<=0||price<=0){toast('أكمل التاريخ والكمية وسعر اللتر','error');return;}const oldLiters=row?num(row.liters):0,availableForSale=solarAvailableQty()+oldLiters;if(liters>availableForSale){toast(`الكمية المتاحة للبيع ${fmt(availableForSale,3)} لتر فقط`,'error');return;}const total=liters*price,saleData={date,liters,pricePerLiter:price,total,buyer,notes},revenueId=row?.revenueId||null,batch=writeBatch(db),saleRef=row?orgDoc('solarSales',id):doc(orgCollection('solarSales')),revRef=revenueId?orgDoc('fundRevenues',revenueId):doc(orgCollection('fundRevenues'));if(row)batch.update(saleRef,{...saleData,updatedAt:serverTimestamp(),updatedBy:state.user.uid});else batch.set(saleRef,{...saleData,revenueId:revRef.id,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});const revData={type:'إيرادات سولار',date,amount:total,description:'بيع سولار',notes:`${liters} لتر × ${price} ₪${buyer?` — المشتري: ${buyer}`:''}${notes?` — ${notes}`:''}`,source:'solarSale',solarSaleId:id||saleRef.id,updatedAt:serverTimestamp(),updatedBy:state.user.uid};if(revenueId)batch.update(revRef,revData);else batch.set(revRef,{...revData,createdAt:serverTimestamp(),createdBy:state.user.uid});await batch.commit();state.loaded=false;await loadData(true);closeModal();toast(row?'تم تعديل بيع السولار وتحديث الصندوق':'تم تسجيل بيع السولار وإضافة قيمة البيع للصندوق');renderFund();};}
-function showFundRevenueForm(id=null){const row=id?fundRows('fundRevenues').find(x=>x.id===id):null;openModal(`<h2>${row?'تعديل إيراد':'إضافة إيراد'}</h2><p class="modal-lead"></p><div class="form-grid"><div class="field"><label>النوع</label><select id="frType"><option value="إيرادات سولار" ${row?.type==='إيرادات سولار'||!row?'selected':''}>إيرادات سولار</option><option value="إيرادات من خدمات الحارس" ${row?.type==='إيرادات من خدمات الحارس'?'selected':''}>إيرادات من خدمات الحارس</option><option value="الإيرادات الأخرى" ${row?.type==='الإيرادات الأخرى'?'selected':''}>الإيرادات الأخرى</option></select></div><div class="field"><label>التاريخ</label><input id="frDate" type="date" value="${safe(row?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="frAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 500"></div><div class="field full"><label>البيان</label><input id="frDesc" value="${safe(row?.description||'')}" placeholder="مثال: إيراد خدمة حارس / إيراد آخر"></div><div class="field full"><label>الملاحظات</label><textarea id="frNotes">${safe(row?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="frSave">حفظ</button><button class="btn ghost" id="frCancel">إلغاء</button></div>`);$('#frCancel').onclick=closeModal;$('#frSave').onclick=async()=>{const amount=num($('#frAmount').value),date=$('#frDate').value,description=$('#frDesc').value.trim();if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}if(!description){toast('اكتب البيان','error');return;}await fundUpsert('fundRevenues',id,{type:$('#frType').value,date,amount,description,notes:$('#frNotes').value.trim()});closeModal();toast(row?'تم تعديل الإيراد':'تمت إضافة الإيراد للصندوق');renderFund();};}
+function showFundRevenueForm(id=null){const row=id?fundRows('fundRevenues').find(x=>x.id===id):null;openModal(`<h2>${row?'تعديل إيراد':'إضافة إيراد'}</h2><p class="modal-lead"></p><div class="form-grid"><div class="field"><label>النوع</label><select id="frType"><option value="إيرادات سولار" ${row?.type==='إيرادات سولار'||!row?'selected':''}>إيرادات سولار</option><option value="إيرادات من خدمات الحارس" ${row?.type==='إيرادات من خدمات الحارس'?'selected':''}>إيرادات من خدمات الحارس</option><option value="الإيرادات الأخرى" ${row?.type==='الإيرادات الأخرى'?'selected':''}>الإيرادات الأخرى</option><option value="مساهمة للصندوق" ${row?.type==='مساهمة للصندوق'?'selected':''}>مساهمة للصندوق</option></select></div><div class="field"><label>التاريخ</label><input id="frDate" type="date" value="${safe(row?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="frAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 500"></div><div class="field full"><label>البيان</label><input id="frDesc" value="${safe(row?.description||'')}" placeholder="مثال: إيراد خدمة حارس / إيراد آخر"></div><div class="field full"><label>الملاحظات</label><textarea id="frNotes">${safe(row?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="frSave">حفظ</button><button class="btn ghost" id="frCancel">إلغاء</button></div>`);$('#frCancel').onclick=closeModal;$('#frSave').onclick=async()=>{const amount=num($('#frAmount').value),date=$('#frDate').value,description=$('#frDesc').value.trim();if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}if(!description){toast('اكتب البيان','error');return;}await fundUpsert('fundRevenues',id,{type:$('#frType').value,date,amount,description,notes:$('#frNotes').value.trim()});closeModal();toast(row?'تم تعديل الإيراد':'تمت إضافة الإيراد للصندوق');renderFund();};}
 function showFundWithdrawalForm(id=null){const row=id?fundRows('fundWithdrawals').find(x=>x.id===id):null;openModal(`<h2>${row?'تعديل سحب من الصندوق':'سحب من الصندوق'}</h2><p class="modal-lead">هذا السجل ينقص من رصيد صندوق العمارة فقط، حتى لا يتم تحميل المبلغ على السكان.</p><div class="form-grid"><div class="field"><label>التاريخ</label><input id="fwDate" type="date" value="${safe(row?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="fwAmount" type="number" min="0" step="1" value="${row?.amount??''}" placeholder="مثال 300"></div><div class="field full"><label>البيان / سبب السحب</label><input id="fwDesc" value="${safe(row?.description||'')}" placeholder="مثال: صيانة مضخة"></div><div class="field full"><label>الملاحظات</label><textarea id="fwNotes">${safe(row?.notes||'')}</textarea></div></div><div class="actions"><button class="btn primary" id="fwSave">حفظ السحب</button><button class="btn ghost" id="fwCancel">إلغاء</button></div>`);$('#fwCancel').onclick=closeModal;$('#fwSave').onclick=async()=>{const amount=num($('#fwAmount').value),date=$('#fwDate').value,description=$('#fwDesc').value.trim();if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}if(!description){toast('اكتب سبب السحب / البيان','error');return;}await fundUpsert('fundWithdrawals',id,{date,amount,description,notes:$('#fwNotes').value.trim()});closeModal();toast(row?'تم تعديل السحب':'تم تسجيل السحب من الصندوق');renderFund();};}
 function showFundFormFor(collection,id){if(collection==='fundRevenues')showFundRevenueForm(id);else if(collection==='fundWithdrawals')showFundWithdrawalForm(id);else if(collection==='solarSales')showSolarSaleForm(id);else if(collection==='solarBatches')showSolarBatchForm(id);}
 async function deleteFundRecord(collection,id){if(!can('admin','manager')){toast('الحذف مخصص للمديرين فقط','error');return;}const labels={fundRevenues:'الإيراد',fundWithdrawals:'السحب من الصندوق',solarSales:'عملية بيع السولار',solarBatches:'دفعة السولار'};if(!confirm(`حذف ${labels[collection]||'السجل'}؟`))return;if(collection==='solarBatches'){const row=fundRows('solarBatches').find(x=>x.id===id);if(!row)return;const remaining=solarBatchTotal()-num(row.liters);if(remaining<solarSoldTotal()){toast(`لا يمكن حذف الدفعة. الدفعات المتبقية (${fmt(remaining,3)} لتر) أقل من السولار المباع (${fmt(solarSoldTotal(),3)} لتر).`,'error');return;}await fundRemove(collection,id);toast('تم حذف دفعة السولار');renderFund();return;}if(collection==='solarSales'){const row=fundRows('solarSales').find(x=>x.id===id);if(!row)return;const batch=writeBatch(db);batch.delete(orgDoc('solarSales',id));if(row.revenueId)batch.delete(orgDoc('fundRevenues',row.revenueId));await batch.commit();state.loaded=false;await loadData(true);toast('تم حذف بيع السولار وإرجاع الكمية للرصيد وتحديث الصندوق');renderFund();return;}if(collection==='fundRevenues'){const row=fundRows('fundRevenues').find(x=>x.id===id);if(row?.source==='solarSale'&&row?.solarSaleId){const sale=fundRows('solarSales').find(x=>x.id===row.solarSaleId);const batch=writeBatch(db);batch.delete(orgDoc('fundRevenues',id));if(sale)batch.delete(orgDoc('solarSales',sale.id));await batch.commit();state.loaded=false;await loadData(true);toast('تم حذف إيراد بيع السولار وتحديث الصندوق والكمية');renderFund();return;}}await fundRemove(collection,id);toast('تم الحذف وتحديث رصيد الصندوق');renderFund();}

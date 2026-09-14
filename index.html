@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#123f3a">
+  <meta name="theme-color" content="#123f3a"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="عمارة الأمين">
   <title>عمارة الأمين — إدارة الحسابات</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles-v31.css?v=40.0">
-  <script defer src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <link rel="manifest" href="./manifest.webmanifest?v=41.0"><link rel="stylesheet" href="./styles-v31.css?v=41.0">
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
@@ -47,7 +47,7 @@
           <button class="nav-item" data-view="payments"><span class="nav-ico">↙</span><span>الدفعات</span></button>
           <button class="nav-item" data-view="debts"><span class="nav-ico">⚑</span><span>الديون</span></button>
           <button class="nav-item" data-view="subscribers"><span class="nav-ico">♙</span><span>السكان</span></button>
-          <button class="nav-item" data-view="fund"><span class="nav-ico">▣</span><span>الايرادات</span></button>
+          <button class="nav-item" data-view="fund"><span class="nav-ico">▣</span><span>الإيرادات و الصندوق</span></button>
         </div>
         <div class="nav-section"><div class="nav-title">النتائج والملفات</div>
           <button class="nav-item" data-view="reports"><span class="nav-ico">▤</span><span>التقارير</span></button>
@@ -67,7 +67,7 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-left"><button id="mobileMenu" class="mobile-menu">☰</button><div><div class="breadcrumb">عمارة الأمين <span>›</span> <span id="crumbText">الرئيسية</span></div><h1 id="page-title">الرئيسية</h1><p id="page-subtitle"></p></div></div>
-        <div class="topbar-actions"><button id="refreshBtn" class="btn ghost">↻ تحديث</button><button id="quickPaymentBtn" class="btn primary">+ تسجيل دفعة</button></div>
+        <div class="topbar-actions"><button id="refreshBtn" class="btn ghost">↻ تحديث</button></div>
       </header>
       <section id="app"></section>
     </main>
@@ -76,6 +76,6 @@
   <div id="toast" class="toast hidden"></div>
   <div id="modal" class="modal hidden" aria-hidden="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
 
-  <script type="module" src="./app-v31.js?v=40.0"></script>
+  <script type="module" src="./app-v31.js?v=41.0"></script><script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js?v=41.0").catch(()=>{}));}</script>
 </body>
 </html>

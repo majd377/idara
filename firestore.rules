@@ -10,7 +10,7 @@ service cloud.firestore {
     }
     function member(orgId) { return signedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)); }
     function role(orgId) { return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role; }
-    function staff(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']; }
+    function staff(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer','resident']; }
     function writer(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator']; }
     function manager(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager']); }
 
