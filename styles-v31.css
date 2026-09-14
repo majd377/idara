@@ -95,3 +95,142 @@ input[type="number"], .reading-input, .ws-prev, .ws-current, .eprev, .ecur, .era
 .account-report-table th,.account-report-table td{white-space:normal!important;word-break:break-word}
 .account-modal-report .section-head-inline .row-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 @media(max-width:900px){.modal{padding:8px}.modal-card:has(.account-modal-report){padding:15px}.account-report-table{font-size:8px!important}.account-modal-report .section-head-inline{align-items:flex-start;gap:10px;flex-direction:column}.account-modal-report .section-head-inline .row-actions{width:100%}.account-modal-report .section-head-inline .row-actions .btn{flex:1}}
+
+/* V37 solar sales + fund printing */
+.head-actions,.section-footer-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.head-actions{justify-content:flex-end}
+.solar-stock-toolbar{display:grid;grid-template-columns:1fr 1.6fr .9fr;gap:12px;align-items:end;margin-bottom:14px}
+.solar-stock-box,.solar-stock-mini{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#fbfefd,#fff);padding:14px}.solar-stock-box span,.solar-stock-mini small{display:block;color:var(--muted);font-size:9px}.solar-stock-box b{display:block;margin-top:5px;font-size:23px;color:var(--primary)}.solar-stock-mini b{display:block;margin-top:5px;font-size:17px}
+.solar-stock-input label{display:block;margin-bottom:7px}.inline-action{display:flex;gap:8px}.inline-action input{flex:1;min-width:0}.calc-preview{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding:12px 14px;background:#f7faf8;border:1px solid var(--line);border-radius:14px}.calc-preview span,.calc-preview small{color:var(--muted);font-size:9px}.calc-preview b{font-size:20px;color:var(--primary)}
+@media(max-width:900px){.solar-stock-toolbar{grid-template-columns:1fr}.head-actions{justify-content:flex-start}.solar-stock-box,.solar-stock-mini{width:100%}}
+
+/* V38 solar batch layout */
+.subpanel{margin-top:14px;padding:14px;border:1px solid #dfe9e6;border-radius:16px;background:#fbfdfc}.subpanel .panel-head{margin-bottom:10px}.solar-section .money-grid{margin:14px 0}.solar-section .head-actions{display:flex;gap:8px;flex-wrap:wrap}.solar-section .table-wrap{margin-top:8px}
+
+
+/* V39 visual refresh — light, practical, less synthetic */
+:root{--bg:#f6f6f2;--card:#fff;--text:#1f2d2a;--muted:#7c8581;--line:#e5e7e1;--primary:#17665a;--primary-dark:#10483f;--primary-soft:#eaf4f0;--gold:#b07b32;--gold-soft:#fbf3e3;--danger:#ae4a55;--danger-soft:#fff1f2;--green:#2f7d62;--shadow:0 5px 18px rgba(27,52,46,.05);--shadow-lg:0 18px 45px rgba(22,43,38,.12);--radius:14px}
+html,body{font-family:"IBM Plex Sans Arabic","Cairo",sans-serif;background:var(--bg);color:var(--text)}
+body{letter-spacing:0}
+.sidebar{width:286px;background:#fbfbf8;box-shadow:none;border-left:1px solid #e2e4df}
+.sidebar-header{padding:20px 18px 12px}.start-week{border-radius:11px;margin-top:17px;padding:12px 13px;background:var(--primary);box-shadow:none}
+.start-week:hover{background:var(--primary-dark);transform:translateY(-1px)}
+.nav-section{padding-top:10px}.nav-title{font-size:10px;color:#a0a59f;padding:0 10px 6px}
+.nav-item{border-radius:9px;padding:9px 10px;margin:2px 0;font-size:13px;color:#65716d;gap:9px;transition:background .15s,transform .15s,color .15s}
+.nav-item:hover{background:#eff2ee;color:var(--text);transform:translateX(-2px)}
+.nav-item.active{background:#e7f0ec;color:var(--primary);box-shadow:inset -3px 0 0 var(--primary)}
+.nav-ico{width:27px;height:27px;border-radius:8px;font-size:14px}
+.main-shell{margin-right:286px;padding:0 34px 44px}
+.topbar{min-height:92px;margin-bottom:20px;border-bottom:1px solid #e4e6e1}
+.topbar h1{font-size:26px}.breadcrumb{font-size:10px}
+.topbar-actions .btn{box-shadow:none}
+.btn{border-radius:9px;padding:10px 13px}.btn.primary{box-shadow:none}.btn:hover{transform:translateY(-1px)}
+.panel{border-radius:14px;box-shadow:var(--shadow);padding:18px}.panel-head{margin-bottom:12px}.panel-head h2{font-size:16px}
+.card,.stat,.money-card,.report-card,.stat-card{box-shadow:none}
+.stat{border-radius:12px;padding:15px}.stat-value{font-size:23px}
+.welcome{border-radius:15px;box-shadow:none;background:linear-gradient(135deg,#1b6a5e,#2b7d6e);padding:26px 28px}
+.welcome:before{content:"";position:absolute;left:28px;bottom:-20px;width:150px;height:150px;border:1px solid rgba(255,255,255,.12);border-radius:22px;transform:rotate(18deg)}
+.welcome h2{font-size:28px}
+.workflow-card{border-radius:11px;background:#fafbf8;border:1px solid #e9ebe5;transition:transform .18s,box-shadow .18s,border-color .18s}
+.workflow-card:hover{transform:translateY(-3px);box-shadow:0 12px 22px rgba(26,54,47,.07);border-color:#d5ddd7}
+.latest{border-radius:11px;transition:transform .15s,box-shadow .15s}.latest:hover{transform:translateY(-2px);box-shadow:0 9px 20px rgba(26,54,47,.07)}
+.form-grid{gap:12px}.field label{font-size:10px;color:#5f6b67}.field input,.field select,.field textarea,.search,.period-select{border-radius:9px;border-color:#dde2dc;background:#fff}
+.table-wrap{border-radius:12px;border-color:#e4e6e1}.table th{background:#f7f8f5;color:#65716b;font-weight:700}.table td,.table th{padding:10px 11px}
+.badge{border-radius:7px}.mini{border-radius:7px}.toast{border-radius:9px;box-shadow:0 10px 22px rgba(0,0,0,.12)}
+.modal{backdrop-filter:none;background:rgba(26,37,34,.38)}.modal-card{border-radius:16px;box-shadow:0 20px 60px rgba(20,38,33,.18)}
+/* Remove explanatory helper lines: titles remain */
+.topbar p,.panel-head>div>p,.hero p,.welcome>p,.section-note,.modal-lead,.calc-banner p,.reading-start p,.fund-hero p,.fund-section .panel-head p,.section-head-inline>div>p,.report-table-title p{display:none!important}
+.cloud-status{display:none!important}
+/* small visual accents */
+.money-card{border-radius:12px;background:#fff;border-color:#e5e7e1}.money-card b{color:var(--primary)}
+.hero,.fund-hero{border-radius:15px;box-shadow:none}
+@media(max-width:1200px){.sidebar{width:255px}.main-shell{margin-right:255px}}
+@media(max-width:900px){.main-shell{margin-right:0;padding:0 16px 32px}.sidebar{width:100%;right:-100%}.sidebar.open{right:0}.topbar{min-height:80px}}
+
+/* V39 dashboard illustration */
+.welcome{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:190px}
+.welcome-copy{position:relative;z-index:2;flex:1}
+.welcome-art{width:210px;display:grid;place-items:center;opacity:.96;transform:translateY(2px);transition:transform .25s ease}
+.welcome-art svg{width:190px;height:145px;overflow:visible}
+.welcome-art rect,.welcome-art path,.welcome-art circle{fill:none;stroke:rgba(255,255,255,.78);stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.welcome-art rect:first-child{fill:rgba(255,255,255,.08);stroke:rgba(255,255,255,.5)}
+.welcome:hover .welcome-art{transform:translateY(-4px) rotate(-1deg)}
+@media(max-width:700px){.welcome{min-height:auto}.welcome-art{display:none}}
+
+/* V41 read-only + export/print fixes */
+.readonly-hidden{display:none!important}.readonly-role .readonly-hidden{display:none!important}.readonly-role input:disabled,.readonly-role select:disabled,.readonly-role textarea:disabled{opacity:.78;cursor:not-allowed}
+
+/* V43 permissions, audit and Arabic PDF fitting */
+.hidden{display:none!important}
+.resident-account-select{margin-top:4px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 7px;font:600 10px inherit;color:var(--text);max-width:150px}
+.audit-table{min-width:900px}.audit-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.audit-filters select{min-width:0}
+.readonly-hidden{display:none!important}.readonly-role .start-week{display:none!important}
+@media(max-width:800px){.audit-filters{grid-template-columns:1fr 1fr}.resident-account-select{max-width:120px}}
+
+.approval-count{display:inline-flex;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;border-radius:999px;background:#c62828;color:#fff;font-size:11px;font-weight:800;margin-inline-start:auto}.readonly-hidden{display:none!important}
+
+
+/* V45 responsive polish + logo */
+.brand-logo{background:#fff;border:1px solid #e5e9e4;overflow:hidden;flex:none;box-shadow:0 7px 18px rgba(24,55,49,.08);padding:2px}
+.brand-logo img{width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
+.brand-logo-hero{width:110px;height:110px;border-radius:26px;margin:0 auto;padding:4px;box-shadow:0 12px 30px rgba(24,55,49,.10)}
+.brand-logo-hero img{object-fit:contain;border-radius:20px}
+.sidebar-brand .brand-logo.small{padding:2px}
+@media(max-width:900px){
+  html,body{overflow-x:hidden}
+  .main-shell{padding-left:12px;padding-right:12px}
+  .topbar{margin-bottom:14px}
+  .topbar-actions{display:grid;grid-template-columns:1fr;gap:7px;width:100%}
+  .topbar-actions .btn{width:100%}
+  .panel,.report-hero,.guide-hero,.welcome{padding:14px;border-radius:13px}
+  .panel-head{flex-direction:column;align-items:stretch;gap:10px}
+  .panel-actions,.head-actions,.row-actions,.report-table-tools,.guide-actions-right{display:flex;flex-wrap:wrap;gap:7px}
+  .panel-actions .btn,.head-actions .btn,.row-actions .btn,.report-table-tools .btn,.guide-actions-right .btn{flex:1 1 auto;min-width:120px}
+  .table-wrap{width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-inline:contain}
+  .table{min-width:680px}
+  .resident-ledger-table{min-width:900px}
+  .account-report-table{min-width:760px}
+  .modal{padding:7px;align-items:end}
+  .modal-card{width:100%;max-width:none;max-height:94vh;border-radius:17px 17px 0 0;padding:18px 14px 14px}
+  .modal-close{left:10px;top:6px}
+  .form-grid,.inline-fields,.source-row,.calc-board,.settings-grid,.grid-2,.money-grid{grid-template-columns:1fr!important}
+  .field.full{grid-column:auto!important}
+  .source-row .actions{grid-column:auto!important}
+  .reading-input{width:100%;min-width:0}
+  .readings-actions{align-items:stretch;flex-direction:column}
+  .readings-actions .btn{width:100%}
+  .stats,.report-grid,.workflow-grid{grid-template-columns:1fr 1fr!important}
+  .welcome{min-height:0!important}
+  .welcome-copy{width:100%}
+  .welcome-actions{flex-wrap:wrap}
+  .welcome-actions .btn{flex:1 1 180px}
+}
+@media(max-width:560px){
+  body{font-size:14px}
+  .main-shell{padding:0 9px 26px}
+  .topbar{min-height:70px;padding:11px 0}
+  .topbar h1{font-size:21px}
+  .breadcrumb{font-size:9px}
+  .mobile-menu{width:36px;height:36px}
+  .stats,.report-grid,.workflow-grid{grid-template-columns:1fr!important}
+  .welcome h2{font-size:22px}
+  .welcome .kicker{font-size:9px}
+  .welcome-actions{display:grid;grid-template-columns:1fr}
+  .welcome-actions .btn{width:100%}
+  .panel-head h2{font-size:15px}
+  .btn{min-height:40px;padding:9px 11px;font-size:10px}
+  .panel{padding:12px}
+  .table{min-width:620px}
+  .toast{left:9px;right:9px;bottom:9px;text-align:center}
+  .brand-logo-hero{width:88px;height:88px;border-radius:22px}
+  .auth-card{padding:24px 18px;border-radius:22px;width:min(470px,calc(100% - 20px))}
+  .auth-card h1{font-size:27px}
+  .sidebar{width:min(320px,92vw)}
+  .sidebar-header{padding:16px 14px 10px}
+  .sidebar-nav-wrap{padding-inline:9px}
+  .nav-item{padding:10px 11px;font-size:12px}
+  .profile-mini{padding:4px 0}
+}
+@media(hover:hover) and (pointer:fine){
+  .btn,.nav-item,.latest,.workflow-card{transition:transform .16s ease,box-shadow .16s ease,background .16s ease}
+  .btn:hover{transform:translateY(-1px)}
+}
