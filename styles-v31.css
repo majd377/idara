@@ -158,3 +158,12 @@ body{letter-spacing:0}
 
 /* V41 read-only + export/print fixes */
 .readonly-hidden{display:none!important}.readonly-role .readonly-hidden{display:none!important}.readonly-role input:disabled,.readonly-role select:disabled,.readonly-role textarea:disabled{opacity:.78;cursor:not-allowed}
+
+/* V43 permissions, audit and Arabic PDF fitting */
+.hidden{display:none!important}
+.resident-account-select{margin-top:4px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 7px;font:600 10px inherit;color:var(--text);max-width:150px}
+.audit-table{min-width:900px}.audit-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.audit-filters select{min-width:0}
+.readonly-hidden{display:none!important}.readonly-role .start-week{display:none!important}
+@media(max-width:800px){.audit-filters{grid-template-columns:1fr 1fr}.resident-account-select{max-width:120px}}
+
+.approval-count{display:inline-flex;min-width:20px;height:20px;padding:0 6px;align-items:center;justify-content:center;border-radius:999px;background:#c62828;color:#fff;font-size:11px;font-weight:800;margin-inline-start:auto}.readonly-hidden{display:none!important}

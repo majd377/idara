@@ -2,7 +2,7 @@
   "name":"عمارة الأمين — إدارة الحسابات",
   "short_name":"عمارة الأمين",
   "description":"نظام إدارة حسابات العمارة",
-  "start_url":"./index.html",
+  "start_url":"./",
   "scope":"./",
   "display":"standalone",
   "orientation":"landscape",
