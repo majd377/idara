@@ -1176,7 +1176,7 @@ function residentPrintHtml(source,titleText='كشف حساب'){
   if(!table)return null;
   const title=source.querySelector('.resident-report-head');
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(titleText)}</title><style>
-  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl}
+  *{box-sizing:border-box}html{zoom:.75;background:#fff}body{margin:0;padding:18px;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl;width:133.3333%}
   body{padding:18px}.resident-report-head{margin-bottom:12px}.resident-report-head h2{margin:0 0 5px;font-size:20px}.resident-report-head p{margin:0;color:#5f6c67;font-size:11px}.balance-box{padding:10px;background:#eef6f3;border-radius:10px;display:inline-block;margin-top:8px}.balance-box span{display:block;font-size:8px;color:#6c7a76}.balance-box b{font-size:18px}.table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:5px 4px;text-align:center;vertical-align:middle;white-space:normal;word-break:break-word;line-height:1.35}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
   </style></head><body><div>${title?title.outerHTML:''}</div>${table.outerHTML}</body></html>`;
 }
