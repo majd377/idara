@@ -575,6 +575,8 @@ function renderHistorical(){
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent='';$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){
+  const residentNav=$('.nav-item[data-view="subscribers"]');
+  if(residentNav){ residentNav.querySelector('span:nth-child(2)')?.replaceChildren(document.createTextNode(state.profile?.role==='resident'?'كشف حسابي':'السكان')); }
   $$('.nav-item[data-view]').forEach(el=>{const v=el.dataset.view;el.style.display=canView(v)?'':'none';el.classList.toggle('active',v===state.view);});
   bindSidebarNavigation();
   const setBtn=$('.nav-item[data-view="settings"]'); if(setBtn){setBtn.querySelector('.approval-count')?.remove(); const n=(state.data.approvalRequests||[]).filter(x=>x.status==='pending').length; if(can('admin')&&n){const b=document.createElement('span');b.className='approval-count';b.textContent=n;setBtn.appendChild(b);}}
@@ -1613,7 +1615,7 @@ function renderResidentReportCard(id,weekId,fromId,toId){
     <div class="resident-report-head"><div><span class="code">${safe(sum.s.code)}</span><h2>${safe(sum.s.name)}</h2><p>${safe(info.buildingName)} · ${safe(info.unitCode)} · ${safe(sum.s.phone||'بدون هاتف')}</p></div><div class="balance-box"><span>المديونية</span><b>${money(sum.finalBalance)}</b></div></div>
     <div class="resident-message"><div class="message-head"><div><h3>الرسالة الجاهزة للساكن</h3><p>المعلومات مبنية على الأسبوع المحدد.</p></div><button class="btn primary" id="copyResidentMessage">نسخ النص</button></div><textarea id="residentMessageText" readonly>${safe(messageForResident(sum))}</textarea></div>
     <div class="account-section"><div class="section-head-inline"><div><h3>كشف الحساب الأسبوعي</h3><p>كل صف أسبوع مستقل ونفس البنود الموجودة في الرسالة.</p></div><span class="muted">${periods.length} أسبوع</span></div>
-      <div class="table-wrap resident-ledger-table"><table class="table" style="min-width:1250px"><thead><tr><th>الأسبوع</th><th>سحب المياه</th><th>قيمة المياه</th><th>خدمة الحارس</th><th>مصاريف أخرى</th><th>الديون السابقة</th><th>الإجمالي قبل الدفعات</th><th>الدفعات</th><th>الإجمالي المطلوب</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا توجد أسابيع ضمن النطاق','')}</td></tr>`}</tbody></table></div>
+      <div class="table-wrap resident-ledger-table"><table class="table account-report-table"><thead><tr><th>الأسبوع</th><th>سحب المياه</th><th>قيمة المياه</th><th>خدمة الحارس</th><th>مصاريف أخرى</th><th>الديون السابقة</th><th>الإجمالي قبل الدفعات</th><th>الدفعات</th><th>الإجمالي المطلوب</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا توجد أسابيع ضمن النطاق','')}</td></tr>`}</tbody></table></div>
     </div>
   </section>`;
   $('#copyResidentMessage').onclick=async()=>{const txt=$('#residentMessageText').value;try{await navigator.clipboard.writeText(txt);toast('تم نسخ الرسالة');}catch{const ta=$('#residentMessageText');ta.select();document.execCommand('copy');toast('تم نسخ الرسالة');}};
@@ -1624,9 +1626,9 @@ function residentPrintHtml(source,titleText='كشف حساب'){
   const title=source.querySelector('.resident-report-head');
   const tableClone=table.cloneNode(true);
   const innerTable=tableClone.querySelector('table');
-  if(innerTable){innerTable.style.minWidth='0';innerTable.style.maxWidth='1061px';innerTable.style.width='1061px';}
+  if(innerTable){innerTable.style.minWidth='0';innerTable.style.maxWidth='100%';innerTable.style.width='100%';innerTable.style.tableLayout='fixed';}
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(titleText)}</title><style>
-  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl;width:1061px;max-width:1061px}body{min-height:194mm}.resident-report-head{margin:0 0 8px}.resident-report-head h2{margin:0 0 4px;font-size:18px}.resident-report-head p{margin:0;color:#5f6c67;font-size:10px}.balance-box{padding:8px;background:#eef6f3;border-radius:8px;display:inline-block;margin-top:6px}.balance-box span{display:block;font-size:7px;color:#6c7a76}.balance-box b{font-size:15px}.resident-report-card{width:1061px;max-width:1061px}.resident-ledger-table{width:1061px;max-width:1061px;overflow:visible!important}.table{width:1061px!important;max-width:1061px!important;min-width:0!important;border-collapse:collapse;table-layout:fixed;font-size:6.8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:3.5px 3px;text-align:center;vertical-align:middle;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere;line-height:1.25}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}.table th:nth-child(1),.table td:nth-child(1){width:11%}.table th:nth-child(2),.table td:nth-child(2){width:9%}.table th:nth-child(3),.table td:nth-child(3){width:11%}.table th:nth-child(4),.table td:nth-child(4){width:10%}.table th:nth-child(5),.table td:nth-child(5){width:11%}.table th:nth-child(6),.table td:nth-child(6){width:11%}.table th:nth-child(7),.table td:nth-child(7){width:13%}.table th:nth-child(8),.table td:nth-child(8){width:10%}.table th:nth-child(9),.table td:nth-child(9){width:14%}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
+  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl;width:100%;max-width:100%;}body{min-height:194mm}.resident-report-head{margin:0 0 8px}.resident-report-head h2{margin:0 0 4px;font-size:18px}.resident-report-head p{margin:0;color:#5f6c67;font-size:10px}.balance-box{padding:8px;background:#eef6f3;border-radius:8px;display:inline-block;margin-top:6px}.balance-box span{display:block;font-size:7px;color:#6c7a76}.balance-box b{font-size:15px}.resident-report-card{width:100%;max-width:100%}.resident-ledger-table{width:100%;max-width:100%;overflow:visible!important}.table{width:100%!important;max-width:100%!important;min-width:0!important;border-collapse:collapse;table-layout:fixed;font-size:6.8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:3.5px 3px;text-align:center;vertical-align:middle;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere;line-height:1.25}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}.table th:nth-child(1),.table td:nth-child(1){width:11%}.table th:nth-child(2),.table td:nth-child(2){width:9%}.table th:nth-child(3),.table td:nth-child(3){width:11%}.table th:nth-child(4),.table td:nth-child(4){width:10%}.table th:nth-child(5),.table td:nth-child(5){width:11%}.table th:nth-child(6),.table td:nth-child(6){width:11%}.table th:nth-child(7),.table td:nth-child(7){width:13%}.table th:nth-child(8),.table td:nth-child(8){width:10%}.table th:nth-child(9),.table td:nth-child(9){width:14%}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
   </style></head><body><div>${title?title.outerHTML:''}</div>${tableClone.outerHTML}</body></html>`;
 }
 function printResidentReport(){
@@ -1644,13 +1646,13 @@ async function downloadReportElementPdf(source,s,periods){
   if(!source){toast('اعرض الكشف أولًا','error');return;}
   if(!window.html2pdf){toast('مكوّن PDF غير محمل. حدّث الصفحة وجرب مرة ثانية.','error');return;}
   const html=residentPrintHtml(source,'كشف حساب');if(!html){toast('تعذر العثور على جدول الكشف','error');return;}
-  const iframe=document.createElement('iframe');iframe.style.cssText='position:fixed;width:1061px;height:1400px;left:-12000px;top:-12000px;border:0;opacity:0';document.body.appendChild(iframe);
+  const iframe=document.createElement('iframe');iframe.style.cssText='position:fixed;width:1060px;height:1500px;left:-12000px;top:-12000px;border:0;opacity:0';document.body.appendChild(iframe);
   try{
     const idoc=iframe.contentDocument;idoc.open();idoc.write(html);idoc.close();
     await new Promise(resolve=>setTimeout(resolve,350));
     try{await idoc.fonts?.ready;}catch{}
     const host=idoc.body;const filename=`كشف_حساب_${String(s?.name||'ساكن').replace(/[\\/:*?"<>|]+/g,'_')}.pdf`;
-    await window.html2pdf().set({margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,scrollX:0,scrollY:0,windowWidth:1061,windowHeight:1400,width:1061},jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},pagebreak:{mode:['css','legacy'],avoid:['tr','.table tr','thead']}}).from(host).save();
+    await window.html2pdf().set({margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,scrollX:0,scrollY:0,windowWidth:1060,windowHeight:1500,width:1060},jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},pagebreak:{mode:['css','legacy'],avoid:['tr','.table tr','thead']}}).from(host).save();
     toast('تم تنزيل كشف الحساب PDF');
   }catch(e){console.error(e);toast('تعذر إنشاء PDF','error');}
   finally{iframe.remove();}
