@@ -701,6 +701,82 @@ async function ensureWaterSummaryForPeriod(pid){
   const existing=waterSummaryForPeriod(pid);if(existing.some(x=>x.key==='external'))return;if(!can('admin','manager','accountant','operator'))return;const p=periodById(pid);if(!p)return;const prior=[...(state.data.waterSummary||[])].filter(x=>x.key==='external'&&x.currentReading!=null&&x.periodId!==pid).map(x=>({x,p:periodById(x.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.x?.currentReading??null;await fsSetDoc(doc(orgCollection('waterSummary')),{periodId:pid,key:'external',label:'الخارجي',type:'external',buildingId:null,previousReading:prior,currentReading:null,consumption:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:state.user.uid});state.loaded=false;await loadData(true);
 }
 
+function residentLedgerAmountForPeriod(id,periodId,type){
+  return (state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,periodId)&&x.transactionType===type)
+    .reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
+}
+function residentPaymentForPeriod(id,periodId){
+  return (state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,periodId)&&x.transactionType==='PAYMENT')
+    .reduce((a,x)=>a+num(x.credit)-num(x.debit),0);
+}
+function residentWaterStoredForPeriod(id,p){
+  const meterIds=new Set((state.data.meters||[]).filter(m=>sameId(m.subscriberId,id)).map(m=>m.id));
+  const rows=(state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,p.id)&&x.transactionType==='WATER');
+  let amount=rows.reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
+  let consumption=(state.data.readings||[]).filter(r=>sameId(r.periodId,p.id)&&meterIds.has(r.meterId))
+    .reduce((a,r)=>a+num(r.consumption),0);
+  if(!amount){
+    const rr=(state.data.readings||[]).find(r=>sameId(r.periodId,p.id)&&meterIds.has(r.meterId));
+    amount=rr?.chargeAmount!=null?num(rr.chargeAmount):0;
+  }
+  return {amount,consumption};
+}
+function residentAccountSeries(id){
+  const s=(state.data.subscribers||[]).find(x=>sameId(x.id,id));
+  if(!s)return [];
+  let running=0;
+  return allPeriodsAscending().map(p=>{
+    const carry=running;
+    const openingDebt=residentLedgerAmountForPeriod(id,p.id,'DEBT');
+    const water=residentWaterStoredForPeriod(id,p);
+    const guard=residentLedgerAmountForPeriod(id,p.id,'SERVICE');
+    const other=(state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,p.id)
+      && !['PAYMENT','WATER','DEBT'].includes(x.transactionType)
+      && !(x.transactionType==='SERVICE'&&x.serviceCode==='GUARD')
+    ).reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
+    const services=guard;
+    const charges=openingDebt+water.amount+services+other;
+    const payments=residentPaymentForPeriod(id,p.id);
+    const before=carry+charges;
+    const balance=before-payments;
+    running=balance;
+    return {s,p,previousBalance:carry,previousDebt:carry+openingDebt,currentConsumption:water.consumption,currentWater:water.amount,
+      guard:services,services,other,periodPayments:payments,finalBeforePayments:before,finalBalance:balance,
+      debt:Math.max(0,balance),creditCarry:Math.max(0,-balance),appliedPrice:p.waterUnitPrice!=null?num(p.waterUnitPrice):0};
+  });
+}
+function residentAccountSeriesRow(id,periodId){
+  const rows=residentAccountSeries(id);return rows.find(x=>sameId(x.p.id,periodId))||rows[rows.length-1]||null;
+}
+function renderResidentAccountReport(){
+  const s=residentSelected(),periods=allPeriodsAscending(),selected=selectedPeriod();
+  if(!s){setTitle('حسابي','');$('#app').innerHTML=`<section class="panel">${empty('لم يتم ربط حسابك بساكن بعد','اطلب من مدير النظام ربط حسابك باسم الساكن.')}</section>`;return;}
+  const series=residentAccountSeries(s.id);
+  const current=series.find(x=>sameId(x.p.id,selected?.id))||series[series.length-1];
+  const info=subscriberRow(s);
+  setTitle('حسابي', 'كشف الحساب للساكن المرتبط — للعرض فقط.');
+  const rows=periods.map(p=>{
+    const x=series.find(y=>sameId(y.p.id,p.id));
+    return `<tr class="${sameId(p.id,selected?.id)?'selected-account-row':''}">
+      <td><b>${safe(p.label||'أسبوع')}</b><br><small>${fmtDate(p.startDate)} → ${fmtDate(p.endDate)}</small></td>
+      <td>${money(x?.previousDebt||0)}</td>
+      <td>${x?.currentConsumption!=null?fmt(x.currentConsumption,3)+' كوب':'—'}</td>
+      <td>${money(x?.currentWater||0)}</td>
+      <td>${money(x?.guard||0)}</td>
+      <td>${money(x?.other||0)}</td>
+      <td>${money(x?.periodPayments||0)}</td>
+      <td>${money(x?.finalBeforePayments||0)}</td>
+      <td class="strong">${money(x?.finalBalance||0)}</td>
+    </tr>`;
+  }).join('');
+  $('#app').innerHTML=`<section class="panel">
+    <div class="resident-report-head account-resident-header"><div><span class="code">${safe(s.code||'')}</span><h2>${safe(s.name||'')}</h2><p>${safe(info.buildingName)} · ${safe(info.unitCode)} · ${safe(s.phone||'بدون هاتف')}</p></div><div class="balance-box"><span>الرصيد / المديونية</span><b>${money(current?.finalBalance||0)}</b></div></div>
+    <div class="panel-head"><div><h3>كشف حسابي</h3><p class="muted">نفس الحساب المسجل بالنظام، من الأقدم إلى الأحدث. لا توجد حسبة جديدة من حساب الساكن.</p></div>${residentWeekSelectHtml('residentWeekSelect',selected,periods)}</div>
+    <div class="table-wrap resident-ledger-table"><table class="table account-report-table"><thead><tr><th>الأسبوع</th><th>المديونية السابقة</th><th>سحب المياه</th><th>قيمة المياه</th><th>الحارس</th><th>مصاريف أخرى</th><th>الدفعات</th><th>قبل الدفعات</th><th>الرصيد / المديونية</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا يوجد كشف','')}</td></tr>`}</tbody></table></div>
+    <div class="section-note" style="margin-top:12px"><b>سعر كوب المياه:</b> ${current&&current.p.waterUnitPrice!=null?waterPriceText(current.p.waterUnitPrice):'—'} للأسبوع المختار، وهو نفس السعر المحفوظ في النظام بدون إعادة حساب.</div>
+  </section>`;
+  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentAccountReport();};
+}
 function renderResidentView(view){
   if(view==='dashboard') return renderResidentDashboard();
   if(view==='energy') return renderResidentEnergy();
@@ -709,7 +785,7 @@ function renderResidentView(view){
   if(view==='contributions') return renderResidentContributions();
   if(view==='payments') return renderResidentPayments();
   if(view==='debts') return renderResidentDebts();
-  if(view==='subscribers') return renderResidentSubscribers();
+  if(view==='subscribers') return renderResidentAccountReport();
   return renderResidentDashboard();
 }
 function residentSelected(){
@@ -731,7 +807,7 @@ function renderReadOnlyDashboard(){
   const name=resident?(s?.name||'بالساكن'):(state.user?.displayName?.split(' ')[0]||'بك');
   $('#app').innerHTML=`<section class="welcome"><div class="welcome-copy"><div class="kicker">عمارة الأمين • ${resident?'حساب الساكن':'وضع المشاهدة'}</div><h2>أهلاً ${safe(name)} 👋</h2><p class="muted">العرض فقط — لا يتم إنشاء أي حسبة جديدة من هذا الحساب.</p></div></section>
   <section class="panel resident-week-panel"><div class="panel-head"><div><h3>الأسبوع المعروض</h3><p class="muted">اختر أي أسبوع لعرض نفس البيانات المحفوظة في النظام لذلك الأسبوع.</p></div><select id="readOnlyHomeWeekSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${sameId(x.id,p?.id)?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div></section>
-  <section class="stats"><div class="stat"><div class="stat-label">سعر كوب المياه</div><div class="stat-value">${price==null?'—':waterPriceText(price)}</div><div class="stat-foot">نفس السعر المسجل في النظام</div></div><div class="stat"><div class="stat-label">إجمالي استهلاك المياه</div><div class="stat-value">${totalWater==null?'—':fmt(totalWater,3)}</div><div class="stat-foot">البيانات المسجلة للأسبوع</div></div><div class="stat"><div class="stat-label">الأسبوع المختار</div><div class="stat-value">${p?fmtDate(p.startDate):'—'}</div><div class="stat-foot">${safe(p?.label||'—')}</div></div>${resident?`<div class="stat"><div class="stat-label">الرصيد الحالي</div><div class="stat-value">${s?money(balanceOf(s.id)):'—'}</div><div class="stat-foot">البيانات المسجلة للحساب</div></div>`:`<div class="stat"><div class="stat-label">عدد السكان</div><div class="stat-value">${fmt((state.data.subscribers||[]).filter(x=>x.active!==false&&x.type!=='خارجي').length,0)}</div><div class="stat-foot">للعرض فقط</div></div>`}</section>`;
+  <section class="stats"><div class="stat"><div class="stat-label">سعر كوب المياه</div><div class="stat-value">${price==null?'—':waterPriceText(price)}</div><div class="stat-foot">نفس السعر المسجل في النظام</div></div><div class="stat"><div class="stat-label">إجمالي استهلاك المياه</div><div class="stat-value">${totalWater==null?'—':fmt(totalWater,3)}</div><div class="stat-foot">البيانات المسجلة للأسبوع</div></div><div class="stat"><div class="stat-label">الأسبوع المختار</div><div class="stat-value">${p?fmtDate(p.startDate):'—'}</div><div class="stat-foot">${safe(p?.label||'—')}</div></div>${resident?`<div class="stat"><div class="stat-label">الرصيد / المديونية</div><div class="stat-value">${s?money(residentAccountSeries(s.id).find(x=>sameId(x.p.id,p?.id))?.finalBalance??0):'—'}</div><div class="stat-foot">حسب كشف الحساب المحفوظ</div></div>`:`<div class="stat"><div class="stat-label">عدد السكان</div><div class="stat-value">${fmt((state.data.subscribers||[]).filter(x=>x.active!==false&&x.type!=='خارجي').length,0)}</div><div class="stat-foot">للعرض فقط</div></div>`}</section>`;
   $('#readOnlyHomeWeekSelect')?.addEventListener('change',e=>{state.periodId=e.target.value;renderReadOnlyDashboard();});
 }
 function renderResidentDashboard(){ return renderReadOnlyDashboard(); }
@@ -749,7 +825,7 @@ function renderResidentWater(){
   const s=residentSelected(), periods=residentPeriodList(), p=selectedPeriod();
   const meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,s?.id));
   const r=p?(state.data.readings||[]).find(y=>sameId(y.periodId,p.id)&&sameId(y.meterId,meter?.id)):null;
-  const storedConsumption=r?.consumption, storedPrice=r?.unitPrice!=null?r.unitPrice:p?.waterUnitPrice, storedCharge=r?.chargeAmount;
+  const storedConsumption=r?.consumption, storedPrice=p?.waterUnitPrice!=null?num(p.waterUnitPrice):(r?.unitPrice!=null?num(r.unitPrice):null), storedCharge=r?.chargeAmount;
   setTitle('المياه','عرض القراءة والقيمة المحفوظة للساكن فقط.');
   $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>قراءات المياه — ${safe(s?.name||'')}</h2><p class="muted">لا توجد حسبة جديدة هنا؛ يتم عرض القيم المسجلة في النظام كما هي.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>الأسبوع</th><th>السابقة</th><th>الحالية</th><th>الاستهلاك</th><th>سعر الكوب</th><th>القيمة</th></tr></thead><tbody><tr><td>${safe(p?.label||'—')}<br><small>${p?fmtDate(p.startDate):'—'} → ${p?fmtDate(p.endDate):'—'}</small></td><td>${r?.previousReading==null?'—':fmt(r.previousReading,3)}</td><td>${r?.currentReading==null?'—':fmt(r.currentReading,3)}</td><td>${storedConsumption==null?'—':fmt(storedConsumption,3)} كوب</td><td>${storedPrice==null?'—':waterPriceText(storedPrice)}</td><td>${storedCharge==null?'—':money(storedCharge)}</td></tr></tbody></table></div></section>`;
   $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentWater();};
