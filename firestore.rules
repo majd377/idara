@@ -3,37 +3,68 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function ownerEmail() {
-      return signedIn()
-        && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email in ['mjdshbyr449@gmail.com', 'eng.khaledshbair@gmail.com'];
+      return signedIn() && request.auth.token.email != null && request.auth.token.email_verified == true
+        && request.auth.token.email in ['mjdshbyr449@gmail.com','eng.khaledshbair@gmail.com'];
     }
     function member(orgId) { return signedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)); }
     function role(orgId) { return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role; }
-    function staff(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']; }
-    function writer(orgId) { return member(orgId) && role(orgId) in ['admin','manager','accountant','operator']; }
-    function manager(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager']); }
-
+    function staff(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer','resident']); }
+    function residentId(orgId) { return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.residentSubscriberId; }
+    function standardStaff(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']); }
+    function residentRead(orgId,collectionId,docId) {
+      return member(orgId) && role(orgId) == 'resident' && (
+        collectionId in ['periods','sources','energyReadings'] ||
+        (collectionId == 'subscribers' && docId == residentId(orgId)) ||
+        (collectionId == 'units' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.unitId == docId) ||
+        (collectionId == 'buildings' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.buildingId == docId) ||
+        (collectionId == 'meters' && resource.data.subscriberId == residentId(orgId)) ||
+        (collectionId == 'readings' && get(/databases/$(database)/documents/organizations/$(orgId)/meters/$(resource.data.meterId)).data.subscriberId == residentId(orgId)) ||
+        (collectionId in ['ledger','payments','debts','contributions'] && resource.data.subscriberId == residentId(orgId))
+      );
+    }
+    function admin(orgId) { return ownerEmail() || (member(orgId) && role(orgId) == 'admin'); }
+    function manager(orgId) { return admin(orgId) || (member(orgId) && role(orgId) == 'manager'); }
+    function accountant(orgId) { return member(orgId) && role(orgId) == 'accountant'; }
+    function operator(orgId) { return member(orgId) && role(orgId) == 'operator'; }
+    function openPeriod(orgId,pid) {
+      return pid != null && exists(/databases/$(database)/documents/organizations/$(orgId)/periods/$(pid))
+        && get(/databases/$(database)/documents/organizations/$(orgId)/periods/$(pid)).data.status in ['Draft','Calculated'];
+    }
+    function accountantUpdateAllowed(orgId,collectionId) {
+      return accountant(orgId) && (
+        resource.data.createdBy == request.auth.uid ||
+        ((collectionId in ['readings','energyReadings','waterSummary']) && resource.data.currentReading == null && request.resource.data.currentReading != null)
+      );
+    }
     match /organizations/{orgId} {
       match /members/{uid} {
-        allow get: if signedIn() && (uid == request.auth.uid || staff(orgId) || ownerEmail());
-        allow list: if staff(orgId) || ownerEmail();
+        allow get: if signedIn() && (uid == request.auth.uid || standardStaff(orgId) || ownerEmail());
+        allow list: if admin(orgId);
         allow create: if signedIn() && uid == request.auth.uid && !exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(uid))
           && ((ownerEmail() && orgId == 'amin-main' && request.resource.data.role == 'admin') || (!ownerEmail() && request.resource.data.role == 'pending'));
-        allow update: if manager(orgId)
-          || (signedIn() && uid == request.auth.uid && request.resource.data.role == resource.data.role);
-        allow delete: if manager(orgId) && uid != request.auth.uid;
+        allow update: if admin(orgId) || (signedIn() && uid == request.auth.uid && request.resource.data.role == resource.data.role);
+        allow delete: if admin(orgId) && uid != request.auth.uid;
       }
-
       match /meta/{docId} {
-        allow read: if staff(orgId) || ownerEmail();
+        allow read: if standardStaff(orgId);
         allow create: if ownerEmail() && orgId == 'amin-main' && docId == 'setup' && !exists(/databases/$(database)/documents/organizations/$(orgId)/meta/setup);
         allow update, delete: if manager(orgId);
       }
-
+      match /auditLogs/{docId} {
+        allow read: if admin(orgId);
+        allow create: if standardStaff(orgId);
+        allow update, delete: if admin(orgId);
+      }
+      match /approvalRequests/{docId} {
+        allow read: if admin(orgId) || (accountant(orgId) && resource.data.requesterId == request.auth.uid);
+        allow create: if accountant(orgId);
+        allow update: if admin(orgId);
+        allow delete: if admin(orgId);
+      }
       match /{collectionId}/{docId} {
-        allow read: if staff(orgId) || ownerEmail();
-        allow create, update: if manager(orgId) || (writer(orgId) && !(collectionId in ['subscribers']));
+        allow read: if standardStaff(orgId) || residentRead(orgId,collectionId,docId);
+        allow create: if manager(orgId) || (accountant(orgId) && collectionId != 'members') || (operator(orgId) && collectionId in ['readings','energyReadings','waterSummary']);
+        allow update: if manager(orgId) || accountantUpdateAllowed(orgId,collectionId) || (operator(orgId) && collectionId in ['readings','energyReadings','waterSummary']);
         allow delete: if manager(orgId);
       }
     }
