@@ -71,7 +71,7 @@ service cloud.firestore {
         allow delete: if admin(orgId);
       }
       match /{collectionId}/{docId} {
-        allow read: if standardStaff(orgId) || residentRead(orgId,collectionId,docId);
+        allow read: if standardStaff(orgId) || residentRead(orgId,collectionId,docId) || (member(orgId) && role(orgId) == 'resident' && collectionId in ['costs','contributions']);
         allow create: if manager(orgId) || (accountant(orgId) && collectionId != 'members') || (operator(orgId) && collectionId in ['readings','energyReadings','waterSummary']);
         allow update: if manager(orgId) || accountantUpdateAllowed(orgId,collectionId) || operatorUpdateAllowed(orgId,collectionId);
         allow delete: if manager(orgId);
