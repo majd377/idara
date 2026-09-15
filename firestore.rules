@@ -13,13 +13,13 @@ service cloud.firestore {
     function standardStaff(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']); }
     function residentRead(orgId,collectionId,docId) {
       return member(orgId) && role(orgId) == 'resident' && (
-        collectionId in ['periods','sources','energyReadings'] ||
+        collectionId in ['periods','sources','energyReadings','waterSummary'] ||
         (collectionId == 'subscribers' && docId == residentId(orgId)) ||
         (collectionId == 'units' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.unitId == docId) ||
         (collectionId == 'buildings' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.buildingId == docId) ||
         (collectionId == 'meters' && resource.data.subscriberId == residentId(orgId)) ||
         (collectionId == 'readings' && get(/databases/$(database)/documents/organizations/$(orgId)/meters/$(resource.data.meterId)).data.subscriberId == residentId(orgId)) ||
-        (collectionId in ['ledger','payments','debts','contributions'] && resource.data.subscriberId == residentId(orgId))
+        (collectionId in ['ledger','payments','debts'] && resource.data.subscriberId == residentId(orgId)) || (collectionId == 'contributions' && (resource.data.subscriberId == residentId(orgId) || resource.data.residentSubscriberId == residentId(orgId)))
       );
     }
     function admin(orgId) { return ownerEmail() || (member(orgId) && role(orgId) == 'admin'); }

@@ -29,4 +29,4 @@
 
 Version 47.2: historical water/electricity readings for accountant/operator require a single admin approval request; only the latest/current period is directly editable. Current period is marked isCurrent=true; opening a new period clears the previous current marker.
 
-V47.3 — resident account binding rebuilt: canonical member-to-subscriber link, legacy field recovery, one-account-per-resident normalization, fresh binding reload, and resident-only read access.
+V47.4 — resident permission/loading hardening: granular resident reads, resident-safe global datasets, legacy contribution lookup, and reduced cascading permission failures.

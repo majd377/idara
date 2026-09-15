@@ -234,36 +234,78 @@ function upsertLocal(c,row){const a=state.data[c]||[];const i=a.findIndex(x=>x.i
 function removeLocal(c,id){state.data[c]=(state.data[c]||[]).filter(x=>x.id!==id);state.loaded=true;}
 
 async function loadResidentData(force=false){
-  // Always refresh the account-to-resident binding first. This makes a newly linked
-  // resident account work immediately without relying on a stale in-memory profile.
+  // Refresh the account-to-resident binding first. A resident must be able to log in
+  // immediately after the administrator links the account, without relying on stale state.
   const memberSnap=await getDoc(orgDoc('members',state.user.uid));
   const member=memberSnap.exists()?{id:memberSnap.id,...memberSnap.data()}:{};
   state.profile={...state.profile,...member};
   if(state.loaded&&!force)return;
-  const sid=member.residentSubscriberId||member.residentId||null;
-  if(sid && !member.residentSubscriberId) state.profile.residentSubscriberId=sid;
-  const publicCollections=['periods','sources','energyReadings'];
-  const publicResults=await Promise.all(publicCollections.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));
-  for(const [c,rows] of publicResults)state.data[c]=rows;
-  state.data.members=[];state.data.approvalRequests=[];state.data.auditLogs=[];state.data.costs=[];state.data.fundRevenues=[];state.data.fundWithdrawals=[];
-  state.data.subscribers=[];state.data.units=[];state.data.buildings=[];state.data.meters=[];state.data.readings=[];state.data.ledger=[];state.data.payments=[];state.data.debts=[];state.data.contributions=[];
+  const sid=member.residentSubscriberId||member.residentId||member.linkedSubscriberId||member.subscriberId||null;
+  if(sid) state.profile.residentSubscriberId=sid;
+
+  const reset=['members','approvalRequests','auditLogs','costs','fundRevenues','fundWithdrawals','subscribers','units','buildings','meters','readings','ledger','payments','debts','contributions'];
+  for(const c of reset) state.data[c]=[];
+
+  // Residents only need these global read-only datasets. Use allSettled so one stale
+  // or not-yet-deployed security rule cannot cause nine cascading unhandled errors.
+  const publicCollections=['periods','sources','energyReadings','waterSummary'];
+  const publicResults=await Promise.allSettled(publicCollections.map(async c=>{
+    const snap=await getDocs(orgCollection(c));
+    return [c,dedupeRows(c,snap.docs.map(d=>({id:d.id,...d.data()})))];
+  }));
+  for(let i=0;i<publicResults.length;i++){
+    const r=publicResults[i],c=publicCollections[i];
+    if(r.status==='fulfilled') state.data[c]=r.value[1];
+    else { state.data[c]=[]; console.warn(`Resident read blocked for ${c}:`,r.reason); }
+  }
+
   if(!sid){state.loaded=true;return;}
+
   const subSnap=await getDoc(orgDoc('subscribers',sid));
   if(!subSnap.exists()){state.loaded=true;return;}
-  const sub={id:subSnap.id,...subSnap.data()};state.data.subscribers=[sub];
-  const reads=[];
-  if(sub.unitId){const us=await getDoc(orgDoc('units',sub.unitId));if(us.exists()){const u={id:us.id,...us.data()};state.data.units=[u];if(u.buildingId){const bs=await getDoc(orgDoc('buildings',u.buildingId));if(bs.exists())state.data.buildings=[{id:bs.id,...bs.data()}];}}}
-  const meterSnap=await getDocs(query(orgCollection('meters'),where('subscriberId','==',sid)));
-  state.data.meters=dedupeRows('meters',meterSnap.docs.map(d=>({id:d.id,...d.data()})));
+  const sub={id:subSnap.id,...subSnap.data()};
+  state.data.subscribers=[sub];
+
+  // Load only the resident's unit/building and meter chain.
+  if(sub.unitId){
+    try{
+      const us=await getDoc(orgDoc('units',sub.unitId));
+      if(us.exists()){
+        const u={id:us.id,...us.data()};state.data.units=[u];
+        if(u.buildingId){const bs=await getDoc(orgDoc('buildings',u.buildingId));if(bs.exists())state.data.buildings=[{id:bs.id,...bs.data()}];}
+      }
+    }catch(e){console.warn('Resident unit/building read blocked:',e);}
+  }
+
+  try{
+    const meterSnap=await getDocs(query(orgCollection('meters'),where('subscriberId','==',sid)));
+    state.data.meters=dedupeRows('meters',meterSnap.docs.map(d=>({id:d.id,...d.data()})));
+  }catch(e){console.warn('Resident meters read blocked:',e);}
+
+  // A resident only needs readings belonging to their own meter(s).
   for(const meter of state.data.meters){
-    const rSnap=await getDocs(query(orgCollection('readings'),where('meterId','==',meter.id)));
-    state.data.readings.push(...rSnap.docs.map(d=>({id:d.id,...d.data()})));
+    try{
+      const rSnap=await getDocs(query(orgCollection('readings'),where('meterId','==',meter.id)));
+      state.data.readings.push(...rSnap.docs.map(d=>({id:d.id,...d.data()})));
+    }catch(e){console.warn(`Resident readings read blocked for meter ${meter.id}:`,e);}
   }
   state.data.readings=dedupeRows('readings',state.data.readings);
-  const ledgerSnap=await getDocs(query(orgCollection('ledger'),where('subscriberId','==',sid)));state.data.ledger=ledgerSnap.docs.map(d=>({id:d.id,...d.data()}));
-  const paySnap=await getDocs(query(orgCollection('payments'),where('subscriberId','==',sid)));state.data.payments=paySnap.docs.map(d=>({id:d.id,...d.data()}));
-  const debtSnap=await getDocs(query(orgCollection('debts'),where('subscriberId','==',sid)));state.data.debts=debtSnap.docs.map(d=>({id:d.id,...d.data()}));
-  const contribSnap=await getDocs(query(orgCollection('contributions'),where('subscriberId','==',sid)));state.data.contributions=contribSnap.docs.map(d=>({id:d.id,...d.data()}));
+
+  const ownQueries=[
+    ['ledger','ledger'],['payments','payments'],['debts','debts'],['contributions','contributions']
+  ];
+  for(const [collection,key] of ownQueries){
+    try{
+      const snap=await getDocs(query(orgCollection(collection),where('subscriberId','==',sid)));
+      state.data[key]=dedupeRows(collection,snap.docs.map(d=>({id:d.id,...d.data()})));
+    }catch(e){console.warn(`Resident ${collection} read blocked:`,e);}
+  }
+  // Some legacy contribution records use residentSubscriberId instead of subscriberId.
+  try{
+    const snap=await getDocs(query(orgCollection('contributions'),where('residentSubscriberId','==',sid)));
+    state.data.contributions=dedupeRows('contributions',[...(state.data.contributions||[]),...snap.docs.map(d=>({id:d.id,...d.data()}))]);
+  }catch(e){/* legacy field may not exist in all deployments; primary query remains valid */}
+
   dedupeAllLoadedData();
   state.loaded=true;
 }
