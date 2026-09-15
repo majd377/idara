@@ -45,3 +45,9 @@
 
 /* V23 refinements */
 body{font-size:15.5px}.building-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.building-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;border:1px solid var(--line,#dbe7e4);border-radius:16px;background:#fbfdfc}.building-card span{display:block;color:#7b8c89;font-size:12px;margin-top:4px}.check-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:360px;overflow:auto;padding:8px}.check-row{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #dce8e5;border-radius:12px;background:#fbfdfc}.autosave-bar{position:sticky;bottom:12px;margin-top:12px;padding:10px 14px;border:1px solid #dbe8e5;border-radius:12px;background:#f4faf8;color:#456661;text-align:center}.report-wide{min-width:1150px}.report-wide td small,.report-wide th small{display:block}.soft-panel{background:#fbfdfc!important}.row-actions{display:flex;gap:5px;flex-wrap:wrap}@media(max-width:900px){.building-grid,.check-grid{grid-template-columns:1fr}.report-wide{min-width:950px}}
+
+/* Resident account binding */
+.resident-link-control{display:flex;flex-direction:column;gap:4px;min-width:190px;margin-inline-start:6px}
+.resident-link-label{font-size:12px;font-weight:700;color:#667085}
+.resident-link-control select{min-width:190px}
+.resident-link-control small{font-size:11px;line-height:1.4}

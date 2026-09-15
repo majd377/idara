@@ -234,10 +234,12 @@ function upsertLocal(c,row){const a=state.data[c]||[];const i=a.findIndex(x=>x.i
 function removeLocal(c,id){state.data[c]=(state.data[c]||[]).filter(x=>x.id!==id);state.loaded=true;}
 
 async function loadResidentData(force=false){
-  if(state.loaded&&!force)return;
+  // Always refresh the account-to-resident binding first. This makes a newly linked
+  // resident account work immediately without relying on a stale in-memory profile.
   const memberSnap=await getDoc(orgDoc('members',state.user.uid));
   const member=memberSnap.exists()?{id:memberSnap.id,...memberSnap.data()}:{};
   state.profile={...state.profile,...member};
+  if(state.loaded&&!force)return;
   const sid=member.residentSubscriberId||member.residentId||null;
   if(sid && !member.residentSubscriberId) state.profile.residentSubscriberId=sid;
   const publicCollections=['periods','sources','energyReadings'];
@@ -1486,7 +1488,7 @@ function renderSettings(){
   $('#app').innerHTML=`
   <section class="settings-grid">
    <div class="panel"><div class="panel-head"><div><h2>حسابك</h2><p class="muted">أنت مدير النظام ولديك كامل الصلاحيات.</p></div></div><div class="member-row"><div class="avatar">${safe((state.user.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(state.user.displayName||'—')}</b><span>${safe(state.user.email||'—')} • ${roleName(state.profile.role)}</span></div></div><div class="actions"><button class="btn ghost" id="logoutSet">تسجيل الخروج</button></div></div>
-   <div class="panel"><div class="panel-head"><div><h2>المستخدمون والصلاحيات</h2><p class="muted">الحساب الجديد يبقى بانتظار موافقة مدير النظام. بعد القبول تظهر له صلاحية المشاهد ويمكنك تغييرها لاحقًا.</p></div></div><div class="members">${members.length?members.map(m=>`<div class="member-row"><div class="avatar">${safe((m.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(m.displayName||'—')}</b><span>${safe(m.email||'')}</span></div>${m.id===state.user.uid?'<span class="badge ok">حسابك</span>':`<select data-role="${m.id}">${roleOpts.map(([k,v])=>`<option value="${k}" ${m.role===k?'selected':''}>${v}</option>`).join('')}</select>${m.role==='pending'?`<button class="mini" data-approve-member="${m.id}">قبول</button>`:''}${m.role==='resident'?`<select data-resident-sub="${m.id}"><option value="">اختر الساكن</option>${(state.data.subscribers||[]).filter(x=>x.type!=='خارجي').map(x=>`<option value="${x.id}" ${sameId(m.residentSubscriberId,x.id)?'selected':''}>${safe(x.name)}</option>`).join('')}</select>`:''}<button class="mini red" data-delete-member="${m.id}">حذف</button>`}</div>`).join(''):empty('لا يوجد مستخدمون','سيظهر الحساب بعد تسجيل الدخول.')}</div></div>
+   <div class="panel"><div class="panel-head"><div><h2>المستخدمون والصلاحيات</h2><p class="muted">الحساب الجديد يبقى بانتظار موافقة مدير النظام. بعد القبول تظهر له صلاحية المشاهد ويمكنك تغييرها لاحقًا.</p></div></div><div class="members">${members.length?members.map(m=>`<div class="member-row"><div class="avatar">${safe((m.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(m.displayName||'—')}</b><span>${safe(m.email||'')}</span></div>${m.id===state.user.uid?'<span class="badge ok">حسابك</span>':`<select data-role="${m.id}">${roleOpts.map(([k,v])=>`<option value="${k}" ${m.role===k?'selected':''}>${v}</option>`).join('')}</select>${m.role==='pending'?`<button class="mini" data-approve-member="${m.id}">قبول</button>`:''}${m.role==='resident'?`<div class="resident-link-control"><label class="resident-link-label">ربط حساب الساكن</label><select data-resident-sub="${m.id}"><option value="">اختر الساكن</option>${(state.data.subscribers||[]).filter(x=>x.type!=='خارجي').map(x=>`<option value="${x.id}" ${sameId(m.residentSubscriberId,x.id)||sameId(m.residentId,x.id)?'selected':''}>${safe(x.name)}</option>`).join('')}</select><small class="muted">${(m.residentSubscriberId||m.residentId)?`مرتبط بـ «${safe(m.residentSubscriberName||m.residentName||'الساكن')}»`:'غير مرتبط — اختر الساكن'}</small></div>`:''}<button class="mini red" data-delete-member="${m.id}">حذف</button>`}</div>`).join(''):empty('لا يوجد مستخدمون','سيظهر الحساب بعد تسجيل الدخول.')}</div></div>
   </section>
   <section class="panel"><div class="panel-head"><div><h2>طلبات الموافقة</h2><p class="muted">تظهر هنا الطلبات الجوهرية فقط. العمليات التابعة لا تتحول إلى طلبات منفصلة.</p></div><div class="panel-actions"><span class="badge warn">${approvals.length} معلّق</span>${approvals.length?'<button class="btn soft" id="approveAllBtn">قبول الكل</button><button class="btn danger" id="rejectAllBtn">رفض الكل</button>':''}</div></div>${approvals.length?`<div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>المستخدم</th><th>الإجراء</th><th>القسم</th><th>السجل</th><th>إجراءات</th></tr></thead><tbody>${approvals.map(a=>`<tr><td>${auditDate(a.createdAt)}</td><td>${safe(a.requesterName||a.requesterEmail)}</td><td><span class="badge info">${a.action==='delete'?'حذف':'تعديل'}</span></td><td>${safe(a.summary||VIEW_NAMES[a.collection]||a.collection||'—')}</td><td>${safe(a.details||a.docId||'—')}</td><td><div class="row-actions"><button class="mini" data-approve-request="${a.id}">موافقة</button><button class="mini red" data-reject-request="${a.id}">رفض</button></div></td></tr>`).join('')}</tbody></table></div>`:empty('لا توجد طلبات معلقة','كل الطلبات تمت معالجتها.')}</section>
   <section class="panel"><div class="panel-head"><div><h2>مراقبة الحركات</h2><p class="muted">تظهر الحركات الجوهرية فقط: إضافة، تعديل، حذف، إدخال قراءة/فتح أسبوع، وطلبات الموافقة.</p></div><button class="btn danger" id="clearAuditBtn">مسح كل حركات المراقبة</button></div><div class="toolbar audit-filters"><select id="auditAction"><option value="">كل الأنواع</option><option>إضافة</option><option>تعديل</option><option>حذف</option><option>طلب موافقة</option><option>موافقة</option><option>رفض</option></select><select id="auditUser"><option value="">كل الأشخاص</option>${[...new Set(logs.map(x=>x.userEmail||x.userName).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(v)}</option>`).join('')}</select><select id="auditCollection"><option value="">كل الأقسام</option>${[...new Set(logs.map(x=>x.collection).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(VIEW_NAMES[v]||v)}</option>`).join('')}</select><select id="auditSort"><option value="newest">الأحدث أولًا</option><option value="oldest">الأقدم أولًا</option></select></div><div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>الشخص</th><th>الوظيفة</th><th>النوع</th><th>القسم</th><th>التفصيل</th></tr></thead><tbody id="auditBody">${auditRows(logs)}</tbody></table></div></section>
@@ -1535,7 +1537,19 @@ async function assignResident(uid,subscriberId){
   await addAudit('تعديل','members',uid,`ربط حساب الساكن بالساكن «${s?.name||subscriberId}»`);
   toast('تم ربط الحساب بالساكن');renderSettings();
 }
-async function updateRole(uid,role){if(!can('admin'))return;if(uid===state.user.uid&&role!=='admin'){toast('لا تنزل صلاحيتك من نفسك.','error');return;}await fsUpdateDoc(orgDoc('members',uid),{role,updatedAt:serverTimestamp(),updatedBy:state.user.uid}); await addAudit('تعديل','members',uid,`تغيير صلاحية الحساب إلى ${roleName(role)}`);upsertLocal('members',{id:uid,role});toast('تم تعديل الصلاحية');renderSettings();}
+async function updateRole(uid,role){
+  if(!can('admin'))return;
+  if(uid===state.user.uid&&role!=='admin'){toast('لا تنزل صلاحيتك من نفسك.','error');return;}
+  const old=(state.data.members||[]).find(x=>sameId(x.id,uid));
+  const patch={role,updatedAt:serverTimestamp(),updatedBy:state.user.uid};
+  // The resident delegation belongs to the resident role. Removing the role removes
+  // the stale link too, so a later re-assignment must be explicit.
+  if(role!=='resident') Object.assign(patch,{residentSubscriberId:null,residentId:null,linkedSubscriberId:null,subscriberId:null,residentSubscriberCode:null,residentCode:null,subscriberCode:null,residentSubscriberName:null,residentName:null,subscriberName:null});
+  await fsUpdateDoc(orgDoc('members',uid),patch);
+  await addAudit('تعديل','members',uid,old?.role==='resident'&&role!=='resident'?`تغيير صلاحية الحساب إلى ${roleName(role)} وإلغاء ربط الساكن`:`تغيير صلاحية الحساب إلى ${roleName(role)}`);
+  upsertLocal('members',{id:uid,...patch,updatedAt:Date.now()});
+  toast('تم تعديل الصلاحية');renderSettings();
+}
 async function deleteWeek(pid){
   if(!pid){toast('اختر أسبوعًا','error');return;}if(!can('admin')){toast('حذف الأسبوع مخصص للمدير','error');return;}const p=periodById(pid);if(!p)return;if(!confirm(`سيتم حذف ${p.label||'الأسبوع'} وكل البيانات المرتبطة به من النظام.\n\nهل أنت متأكد؟`))return;
   const ops=[b=>b.delete(orgDoc('periods',pid))];
