@@ -24,8 +24,8 @@ function recalculatePeriod(periodId) {
   const tx = db.transaction(() => {
     db.prepare(`DELETE FROM charges WHERE period_id=? AND type='WATER'`).run(periodId);
     db.prepare(`DELETE FROM ledger_transactions WHERE period_id=? AND transaction_type='WATER'`).run(periodId);
-    db.prepare(`UPDATE meter_readings SET unit_price=?, charge_amount=CASE WHEN status!='Invalid' AND consumption IS NOT NULL THEN ROUND(consumption*?,2) ELSE NULL END WHERE period_id=?`).run(applied || null, applied || 0, periodId);
-    const grouped = db.prepare(`SELECT m.subscriber_id, ROUND(SUM(COALESCE(mr.charge_amount,0)),2) amount FROM meter_readings mr JOIN meters m ON m.id=mr.meter_id WHERE mr.period_id=? AND m.subscriber_id IS NOT NULL AND mr.status!='Invalid' GROUP BY m.subscriber_id`).all(periodId);
+    db.prepare(`UPDATE meter_readings SET unit_price=?, charge_amount=CASE WHEN status!='Invalid' AND consumption IS NOT NULL THEN consumption*? ELSE NULL END WHERE period_id=?`).run(applied || null, applied || 0, periodId);
+    const grouped = db.prepare(`SELECT m.subscriber_id, SUM(COALESCE(mr.charge_amount,0)) amount FROM meter_readings mr JOIN meters m ON m.id=mr.meter_id WHERE mr.period_id=? AND m.subscriber_id IS NOT NULL AND mr.status!='Invalid' GROUP BY m.subscriber_id`).all(periodId);
     for (const g of grouped) {
       if (Number(g.amount) !== 0) {
         const desc=`مياه ${period.label}`;
