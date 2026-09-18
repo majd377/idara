@@ -13,19 +13,21 @@ service cloud.firestore {
     function standardStaff(orgId) { return ownerEmail() || (member(orgId) && role(orgId) in ['admin','manager','accountant','operator','viewer']); }
     function residentRead(orgId,collectionId,docId) {
       return member(orgId) && role(orgId) == 'resident' && (
-        collectionId in ['periods','sources','energyReadings'] ||
+        collectionId in ['periods','sources','energyReadings','waterSummary'] ||
         (collectionId == 'subscribers' && docId == residentId(orgId)) ||
         (collectionId == 'units' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.unitId == docId) ||
         (collectionId == 'buildings' && get(/databases/$(database)/documents/organizations/$(orgId)/subscribers/$(residentId(orgId))).data.buildingId == docId) ||
         (collectionId == 'meters' && resource.data.subscriberId == residentId(orgId)) ||
         (collectionId == 'readings' && get(/databases/$(database)/documents/organizations/$(orgId)/meters/$(resource.data.meterId)).data.subscriberId == residentId(orgId)) ||
-        (collectionId in ['ledger','payments','debts','contributions'] && resource.data.subscriberId == residentId(orgId))
+        (collectionId in ['ledger','payments','debts'] && resource.data.subscriberId == residentId(orgId))
       );
     }
     function admin(orgId) { return ownerEmail() || (member(orgId) && role(orgId) == 'admin'); }
     function manager(orgId) { return admin(orgId) || (member(orgId) && role(orgId) == 'manager'); }
     function accountant(orgId) { return member(orgId) && role(orgId) == 'accountant'; }
     function operator(orgId) { return member(orgId) && role(orgId) == 'operator'; }
+    function businessCollection(collectionId) { return collectionId in ['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','waterSummary','debts','fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals','solarStock','solarBatches']; }
+    function protectedCollection(collectionId) { return collectionId in ['members','meta','auditLogs','approvalRequests','seedDeletes']; }
     function openPeriod(orgId,pid) {
       return pid != null && exists(/databases/$(database)/documents/organizations/$(orgId)/periods/$(pid))
         && get(/databases/$(database)/documents/organizations/$(orgId)/periods/$(pid)).data.status in ['Draft','Calculated'];
@@ -72,9 +74,17 @@ service cloud.firestore {
       }
       match /{collectionId}/{docId} {
         allow read: if standardStaff(orgId) || residentRead(orgId,collectionId,docId);
-        allow create: if manager(orgId) || (accountant(orgId) && collectionId != 'members') || (operator(orgId) && collectionId in ['readings','energyReadings','waterSummary']);
-        allow update: if manager(orgId) || accountantUpdateAllowed(orgId,collectionId) || operatorUpdateAllowed(orgId,collectionId);
-        allow delete: if manager(orgId);
+        allow create: if !protectedCollection(collectionId) && (
+          (manager(orgId) && businessCollection(collectionId)) ||
+          (accountant(orgId) && businessCollection(collectionId)) ||
+          (operator(orgId) && collectionId in ['readings','energyReadings','waterSummary'])
+        );
+        allow update: if !protectedCollection(collectionId) && (
+          (manager(orgId) && businessCollection(collectionId)) ||
+          accountantUpdateAllowed(orgId,collectionId) ||
+          operatorUpdateAllowed(orgId,collectionId)
+        );
+        allow delete: if !protectedCollection(collectionId) && manager(orgId) && businessCollection(collectionId);
       }
     }
   }
