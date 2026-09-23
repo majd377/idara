@@ -596,9 +596,19 @@ async function navigate(view,periodId=null,force=false){
   state.view=view;if(periodId)state.periodId=periodId;setActiveNav();
   const appEl=$('#app');
   appEl?.classList.add('view-fade-out');
-  await loadData(force);
-  render();
-  if(appEl){appEl.classList.remove('view-fade-out');appEl.classList.add('view-fade-in');requestAnimationFrame(()=>setTimeout(()=>appEl.classList.remove('view-fade-in'),220));}
+  // كل ما بين إضافة .view-fade-out (opacity:.4) وإزالتها كان بدون try/finally:
+  // أي استثناء أثناء loadData() (رفض صلاحية من Firestore، انقطاع شبكة) أو أثناء render()
+  // كان يوقف التنفيذ ويترك الشاشة بأكملها معتمة/باهتة بشكل دائم — هذا هو سبب "التغبيش".
+  // الآن finally تضمن إزالة الحالة الباهتة دائمًا، ونعرض رسالة خطأ بدل الفشل الصامت.
+  try{
+    await loadData(force);
+    render();
+  }catch(e){
+    console.error('navigate failed',e);
+    toast('حدث خطأ أثناء تحميل الصفحة، حاول مرة أخرى.','error');
+  }finally{
+    if(appEl){appEl.classList.remove('view-fade-out');appEl.classList.add('view-fade-in');requestAnimationFrame(()=>setTimeout(()=>appEl.classList.remove('view-fade-in'),220));}
+  }
   $('#sidebar')?.classList.remove('open');
 }
 
@@ -724,10 +734,15 @@ function residentWaterStoredForPeriod(id,p){
   const meterIds=new Set((state.data.meters||[]).filter(m=>sameId(m.subscriberId,id)).map(m=>m.id));
   const rr=(state.data.readings||[]).find(r=>sameId(r.periodId,p.id)&&meterIds.has(r.meterId));
   const consumption=rr?.consumption!=null?num(rr.consumption):(rr?.currentReading!=null&&rr?.previousReading!=null?Math.max(0,num(rr.currentReading)-num(rr.previousReading))/1000:0);
-  const price=readingManualPrice(rr)??currentTotals(p.id).appliedPrice;
-  // Use the same saved weekly price and reading used by the admin view.
-  // Never reuse an old rounded ledger amount for historical resident displays.
-  const amount=consumption*num(price);
+  const storedCharge=rr?.chargeAmount!=null?num(rr.chargeAmount):null;
+  // نفس منطق currentWaterCharge()/renderResidentWater(): استخدم الرقم المحفوظ فعليًا على
+  // القراءة (chargeAmount/unitPrice) الذي حسبه المدير وثبّته، بدل إعادة حسابه عبر
+  // currentTotals() التي تحتاج بيانات كل السكان والعمارة كاملة — وجلسة الساكن، بسبب قواعد
+  // الأمان، ما عندها إلا بياناتها هي فقط، فكانت النتيجة سعرًا ومبلغًا خاطئين ومُضخَّمين.
+  // كانت هذه آخر نقطة بالكود لم تُصلَح رغم إصلاح نفس المشكلة في currentWaterCharge() و
+  // renderResidentWater() و renderReadOnlyDashboard() — وهي بالضبط صفحة "حسابي" للساكن.
+  const price=rr?.unitPrice!=null?num(rr.unitPrice):(readingManualPrice(rr)??(p?.waterUnitPrice!=null?num(p.waterUnitPrice):0));
+  const amount=storedCharge!=null?storedCharge:consumption*num(price);
   return {amount,consumption,price};
 }
 function residentAccountSeries(id){
