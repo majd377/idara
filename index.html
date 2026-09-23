@@ -6,13 +6,28 @@
   <link rel="icon" type="image/png" sizes="64x64" href="./icons/favicon.png?v=45.0">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=45.0">
   <meta name="theme-color" content="#123f3a"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="عمارة الأمين">
+  <!-- Security hardening: only allow the app's own code, Google/Firebase auth &
+       Firestore endpoints, and Google Fonts. Blocks any injected/third-party
+       script or frame from running even if some other part of the page were
+       compromised (XSS payload in stored data, a bad browser extension, etc).
+       frame-ancestors/X-Frame-Options can only be enforced via an HTTP
+       response header, not a <meta> tag — if your host (GitHub Pages, etc.)
+       supports custom headers, add those there too.
+       IMPORTANT: verify against your live Firebase project after deploying —
+       Google sign-in popups and Firestore reachability were not testable from
+       this offline environment (no network access to Google/Firebase here). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://firestore.googleapis.com; frame-src https://accounts.google.com https://*.firebaseapp.com;">
   <title>عمارة الأمين — إدارة الحسابات</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="manifest" href="./manifest.webmanifest?v=45.0"><link rel="stylesheet" href="./styles-v31.css?v=45.0">
-  <script defer src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <link rel="manifest" href="./manifest.webmanifest?v=49.0"><link rel="stylesheet" href="./styles-v31.css?v=49.0">
+  <!-- Vendored locally (./vendor) instead of a CDN: works offline, isn't
+       affected by a third-party host being slow/unreachable, and removes a
+       supply-chain dependency on jsdelivr/cdnjs staying trustworthy. -->
+  <script defer src="./vendor/xlsx.bundle.js"></script>
+  <script defer src="./vendor/html2canvas.min.js"></script>
+  <script defer src="./vendor/jspdf.umd.min.js"></script>
 </head>
 <body>
   <div id="boot" class="boot"><div class="boot-card"><div class="brand-logo brand-logo-hero"><img src="./assets/ameen-logo.png?v=45.0" alt="عمارة الأمين"></div><h1>عمارة الأمين</h1><p>جاري تجهيز الحسابات…</p></div></div>
@@ -78,21 +93,7 @@
   <div id="toast" class="toast hidden"></div>
   <div id="modal" class="modal hidden" aria-hidden="true"><div class="modal-card"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div></div>
 
-  
-<script>
-(async()=>{
-  try {
-    if ("serviceWorker" in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
-    }
-    if ("caches" in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-    }
-  } catch (_) {}
-})();
-</script>
-<script type="module" src="./app-v47.js?v=47.2"></script>
+<script defer src="./sw-unregister.js"></script>
+<script type="module" src="./app-v47.js?v=51.0"></script>
 </body>
 </html>

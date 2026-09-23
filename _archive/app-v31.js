@@ -1,9 +1,8 @@
 import { INITIAL_DATA } from './initial-data.js';
-import { exportRowSafePdf } from './pdf-export.js';
 
 import {
   auth, provider, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
-  db, orgRef, orgCollection, orgDoc, doc, getDoc, getDocs, query, where,
+  db, orgRef, orgCollection, orgDoc, doc, getDoc, getDocs,
   addDoc, setDoc as fsSetDoc, updateDoc as fsUpdateDoc, deleteDoc as rawDeleteDoc, writeBatch, serverTimestamp, ADMIN_EMAILS
 } from './firebase-init-v31.js';
 
@@ -13,13 +12,8 @@ const state = {user:null,profile:null,view:'dashboard',periodId:null,data:{},loa
 const ROLES={admin:'مدير النظام',manager:'مدير',accountant:'محاسب',operator:'موظف قراءات',viewer:'مشاهد',resident:'ساكن',pending:'بانتظار الموافقة'};
 const COLLECTIONS=['buildings','units','subscribers','meters','periods','readings','sources','energyReadings','costs','contributions','payments','ledger','members','waterSummary','seedDeletes','debts','fundGuardConfig','fundGuardPayments','fundGuardExpenses','solarReceipts','solarSales','fundOtherIncome','fundExpenses','fundRevenues','fundWithdrawals','solarStock','solarBatches','approvalRequests','auditLogs'];
 const VIEW_NAMES={dashboard:'الرئيسية',periods:'الأسابيع والحساب',readings:'قراءات الماء',energy:'الكهرباء والمولدات',costs:'المصاريف والطوارئ',guard:'خدمة الحارس',contributions:'المساهمات والخصومات',subscribers:'السكان والوحدات',payments:'الدفعات والأرصدة',debts:'الديون السابقة',fund:'الإيرادات و الصندوق',reports:'التقارير والتصدير',settings:'الإعدادات والصلاحيات',guide:'دليل استخدام عملي',historical:'البيانات التاريخية'};
-const roundMoney=v=>Number(v||0);
-// All money calculations stay exact. Only the approved water-unit price is rounded to one decimal.
-const roundTenthValue=v=>{const n=Number(v||0);return Number.isFinite(n)?Number((Math.round((n+Number.EPSILON)*10)/10).toFixed(1)):0;};
-const waterPrice=v=>{const n=Number(v);return Number.isFinite(n)?n:0;};
-const waterChargeAmount=(consumption,price)=>Number(consumption||0)*waterPrice(price);
-const waterPriceText=v=>{const n=waterPrice(v);return Number.isFinite(n)?new Intl.NumberFormat('en-US',{minimumFractionDigits:1,maximumFractionDigits:1,useGrouping:true}).format(n):'—';};
-const formatFinancialInteger=v=>new Intl.NumberFormat('en-US',{minimumFractionDigits:1,maximumFractionDigits:1,useGrouping:true}).format(Number(v||0));
+const roundMoney=v=>Math.round(Number(v||0));
+const formatFinancialInteger=v=>new Intl.NumberFormat('en-US',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:true}).format(Math.round(Number(v||0)));
 const money=v=>`${formatFinancialInteger(v)} ₪`;
 const money0=v=>`${formatFinancialInteger(v)} ₪`;
 const num=v=>Number(v||0);
@@ -55,20 +49,12 @@ const VIEW_PERMISSIONS={
   accountant:['dashboard','periods','readings','energy','costs','guard','contributions','subscribers','payments','debts','fund','reports','guide','historical'],
   operator:['dashboard','readings','energy'],
   viewer:['dashboard','periods','readings','energy','costs','guard','contributions','subscribers','payments','debts','fund','reports','guide','historical'],
-  resident:['dashboard','readings','energy','costs','contributions','payments','debts','subscribers'],
+  resident:['dashboard','readings','energy','costs','contributions','subscribers'],
 };
 function canView(view){return (VIEW_PERMISSIONS[state.profile?.role]||[]).includes(view);}
 function isOwnerEmail(email=(state.user?.email||'')){return ADMIN_EMAILS.map(x=>x.toLowerCase()).includes(String(email).toLowerCase());}
-function isCurrentPeriodId(pid){const latest=latestPeriods()[0];return !!latest && sameId(latest.id,pid);}
-function isCurrentPeriodRecord(data){return !!data?.periodId && isCurrentPeriodId(data.periodId);}
-function measurementNeedsApproval(collection,oldData,nextData={}){
-  const role=state.profile?.role;
-  if(!['accountant','operator'].includes(role)) return false;
-  if(!['readings','energyReadings','waterSummary'].includes(collection) || !oldData) return false;
-  const pid=oldData.periodId ?? nextData?.periodId;
-  return !isCurrentPeriodId(pid);
-}
-function accountantCanFillBlankMeasurement(){return false;}
+function isCurrentPeriodRecord(data){const p=data?.periodId?periodById(data.periodId):null;return !!p && ['Draft','Calculated'].includes(p.status||'Draft');}
+function accountantCanFillBlankMeasurement(collection,oldData,nextData){return state.profile?.role==='accountant'&&['readings','energyReadings','waterSummary'].includes(collection)&&oldData&&oldData.currentReading==null&&nextData?.currentReading!=null;}
 function plainApprovalData(data){
   const out={}; for(const [k,v] of Object.entries(data||{})){ if(['updatedAt','updatedBy'].includes(k)) continue; if(v && typeof v==='object' && !Array.isArray(v)){ const sv=v.toString?.(); if(String(sv||'').includes('serverTimestamp')) continue; } if(v===undefined) continue; out[k]=v; }
   return out;
@@ -77,78 +63,31 @@ async function addAudit(action,collection='',docId='',details='',extra={}){
   if(!state.user?.uid || !state.profile || state.profile.role==='pending') return;
   try{await addDoc(orgCollection('auditLogs'),{action,collection,docId,details,userId:state.user.uid,userName:state.user.displayName||state.user.email||'مستخدم',userEmail:state.user.email||'',role:state.profile.role,createdAt:serverTimestamp(),...extra});}catch(e){console.warn('audit log failed',e);}
 }
-function displayEntityName(collection,row){
-  if(!row)return '';
-  if(collection==='subscribers')return row.name?`الساكن «${row.name}»${row.code?` (${row.code})`:''}`:'الساكن';
-  if(collection==='units')return row.code?`الوحدة «${row.code}»`:'الوحدة';
-  if(collection==='buildings')return row.name?`البناية «${row.name}»`:'البناية';
-  if(collection==='payments')return `دفعة ${money(row.amount)}${row.subscriberId?` للساكن «${(state.data.subscribers||[]).find(x=>sameId(x.id,row.subscriberId))?.name||'—'}»`:''}`;
-  if(collection==='debts')return `دين ${money(row.amount)}${row.subscriberId?` للساكن «${(state.data.subscribers||[]).find(x=>sameId(x.id,row.subscriberId))?.name||'—'}»`:''}`;
-  if(collection==='costs')return `مصروف «${row.description||row.type||'—'}» بمبلغ ${money(row.amount)}`;
-  if(collection==='contributions')return `مساهمة «${row.description||contributionLabel(row)}» بمبلغ ${money(row.amount)}`;
-  if(collection==='sources')return row.name?`مصدر «${row.name}»`:'مصدر الطاقة';
-  if(collection==='periods')return row.label?`الأسبوع «${row.label}»`:'الأسبوع';
-  return '';
-}
-function describeChanges(oldData,nextData){
-  const labels={name:'الاسم',code:'الكود',phone:'الهاتف',amount:'المبلغ',date:'التاريخ',paymentDate:'تاريخ الدفعة',currentReading:'القراءة الحالية',previousReading:'القراءة السابقة',unitId:'الوحدة',buildingId:'البناية',subscriberId:'الساكن',periodId:'الأسبوع',pricePerKwh:'سعر الكيلو',cost:'التكلفة',description:'البيان',contributionType:'نوع المساهمة',sourceId:'المصدر',role:'الصلاحية',residentSubscriberId:'الساكن المرتبط'};
-  const changed=[];
-  for(const k of new Set([...Object.keys(oldData||{}),...Object.keys(nextData||{})])){if(['updatedAt','updatedBy','createdAt','createdBy'].includes(k))continue;const a=oldData?.[k],b=nextData?.[k];const sa=typeof a==='object'?JSON.stringify(a):String(a??'');const sb=typeof b==='object'?JSON.stringify(b):String(b??'');if(sa!==sb)changed.push(`${labels[k]||k}: ${formatAuditValue(a,k)} → ${formatAuditValue(b,k)}`);}
-  return changed.length?changed.join('، '):'تعديل بيانات السجل';
-}
-function formatAuditValue(v,key=''){
-  if(v==null||v==='')return 'فارغ';
-  if(key==='amount'||key==='cost')return money(v);
-  if(key==='pricePerKwh')return `${fmt(v,1)} ₪`;
-  if(key==='currentReading'||key==='previousReading')return fmt(v,3);
-  if(key==='subscriberId')return (state.data.subscribers||[]).find(x=>sameId(x.id,v))?.name||String(v);
-  if(key==='buildingId')return (state.data.buildings||[]).find(x=>sameId(x.id,v))?.name||String(v);
-  if(key==='unitId')return (state.data.units||[]).find(x=>sameId(x.id,v))?.code||String(v);
-  if(key==='periodId')return periodById(v)?.label||String(v);
-  if(key==='residentSubscriberId')return (state.data.subscribers||[]).find(x=>sameId(x.id,v))?.name||String(v);
-  if(key==='role')return roleName(v);
-  return String(v);
-}
-async function createApprovalRequest(action,ref,data,oldData,meta={}){
+async function createApprovalRequest(action,ref,data,oldData){
   const collection=ref?.parent?.id||''; const docId=ref?.id||'';
   const payload=plainApprovalData(data); const old=plainApprovalData(oldData);
-  const r=await addDoc(orgCollection('approvalRequests'),{action,collection,docId,payload,oldData:old,...meta,requesterId:state.user.uid,requesterName:state.user.displayName||state.user.email||'مستخدم',requesterEmail:state.user.email||'',status:'pending',createdAt:serverTimestamp()});
-  await addAudit('طلب موافقة',collection,docId,action==='delete'?'طلب حذف':`طلب تعديل: ${describeChanges(old,payload)}`,{requestId:r.id});
+  const r=await addDoc(orgCollection('approvalRequests'),{action,collection,docId,payload,oldData:old,requesterId:state.user.uid,requesterName:state.user.displayName||state.user.email||'مستخدم',requesterEmail:state.user.email||'',status:'pending',createdAt:serverTimestamp()});
+  await addAudit('طلب موافقة',collection,docId,action==='delete'?'طلب حذف':'طلب تعديل للسجل السابق',{requestId:r.id});
   toast(action==='delete'?'تم إرسال طلب الحذف لمدير النظام':'هذا سجل سابق؛ تم إرسال طلب التعديل لمدير النظام');
-  return r.id;
-}
-async function createApprovalBatch(items,summary,details='',meta={}){
-  if(!items.length)return null;
-  const clean=items.map(x=>({collection:x.collection,docId:x.docId,payload:plainApprovalData(x.payload),oldData:plainApprovalData(x.oldData)}));
-  const r=await addDoc(orgCollection('approvalRequests'),{action:'batchUpdate',summary,details,items:clean,...meta,requesterId:state.user.uid,requesterName:state.user.displayName||state.user.email||'مستخدم',requesterEmail:state.user.email||'',status:'pending',createdAt:serverTimestamp()});
-  await addAudit('طلب موافقة','',r.id,summary,{requestId:r.id,itemCount:clean.length});
-  toast('تم إرسال الطلب الرئيسي لمدير النظام للموافقة');
   return r.id;
 }
 const APPROVAL_SENT='__APPROVAL_SENT__';
 async function setDocWithAudit(ref,data,options){
   const result=await fsSetDoc(ref,data,options);
   const coll=ref?.parent?.id||'';
-  if(state.user&&state.profile&&coll&&!['auditLogs','approvalRequests','seedDeletes','members'].includes(coll)&&!(data?.embeddedSource)) await addAudit('إضافة',coll,ref?.id||'',`إضافة ${displayEntityName(coll,data)||`سجل ${ref?.id||''}`}`);
+  if(state.user&&state.profile&&coll&&!['auditLogs','approvalRequests','seedDeletes','members'].includes(coll)&&!(data?.embeddedSource)) await addAudit('إضافة',coll,ref?.id||'',`إضافة سجل ${ref?.id||''}`);
   return result;
 }
-async function fsDeleteDoc(ref){const result=await rawDeleteDoc(ref);const coll=ref?.parent?.id||'';if(state.user&&state.profile&&coll&&!['auditLogs','approvalRequests','seedDeletes'].includes(coll))await addAudit('حذف',coll,ref?.id||'',`حذف ${displayEntityName(coll,null)||`سجل ${ref?.id||''}`}`);return result;}
-async function updateDoc(ref,data,options={}){
-  const {audit=true}=options;
+async function fsDeleteDoc(ref){const result=await rawDeleteDoc(ref);const coll=ref?.parent?.id||'';if(state.user&&state.profile&&coll&&!['auditLogs','approvalRequests','seedDeletes'].includes(coll))await addAudit('حذف',coll,ref?.id||'',`حذف سجل ${ref?.id||''}`);return result;}
+async function updateDoc(ref,data){
   const coll=ref?.parent?.id||'';
-  if(['accountant','operator'].includes(state.profile?.role) && ['readings','energyReadings','waterSummary'].includes(coll)){
-    const snap=await getDoc(ref); const old=snap.exists()?snap.data():null;
-    if(old && measurementNeedsApproval(coll,old,data)){ await createApprovalRequest('update',ref,data,old); throw new Error(APPROVAL_SENT); }
-    if(state.profile?.role==='operator' && !old){ throw new Error('لا يمكن إنشاء القراءة بهذه الطريقة'); }
-    const result=await fsUpdateDoc(ref,data); if(audit) await addAudit('تعديل',coll,ref?.id||'',describeChanges(old,data)); return result;
-  }
   if(state.profile?.role==='accountant'){
     const snap=await getDoc(ref); const old=snap.exists()?snap.data():null;
     const own=old && sameId(old.createdBy,state.user.uid);
-    if(old && !own){ await createApprovalRequest('update',ref,data,old); throw new Error(APPROVAL_SENT); }
-    const result=await fsUpdateDoc(ref,data); if(audit) await addAudit('تعديل',coll,ref?.id||'',describeChanges(old,data)); return result;
+    if(old && !own && !accountantCanFillBlankMeasurement(coll,old,data)){ await createApprovalRequest('update',ref,data,old); throw new Error(APPROVAL_SENT); }
+    const result=await fsUpdateDoc(ref,data); await addAudit('تعديل',coll,ref?.id||'',describeChanges(old,data)); return result;
   }
-  const result=await fsUpdateDoc(ref,data); if(audit) await addAudit('تعديل',coll,ref?.id||'',describeChanges(null,data)); return result;
+  const result=await fsUpdateDoc(ref,data); await addAudit('تعديل',coll,ref?.id||'',describeChanges(null,data)); return result;
 }
 function statusBadge(s){const map={Draft:['مسودة','warn'],Calculated:['محسوبة','info'],Approved:['معتمدة','ok'],Closed:['مغلقة','ok'],Pending:['بانتظار','warn'],Entered:['مدخلة','ok'],Invalid:['غير صالحة','danger']};const x=map[s]||['—','info'];return `<span class="badge ${x[1]}">${x[0]}</span>`;}
 function statusText(s){return ({Draft:'مسودة',Calculated:'محسوبة',Approved:'معتمدة',Closed:'مغلقة',Pending:'بانتظار',Entered:'مدخلة',Invalid:'غير صالحة'}[s]||s||'—');}
@@ -197,152 +136,20 @@ function readingsForPeriod(pid){return (state.data.readings||[]).filter(r=>r.per
 function energyForPeriod(pid){return (state.data.energyReadings||[]).filter(r=>r.periodId===pid);}
 function costsForPeriod(pid){return (state.data.costs||[]).filter(c=>c.periodId===pid);}
 
-
-// V47.1 — prevent legacy/seed duplicates from leaking into the UI or calculations.
-function rowNaturalKey(collection,row){
-  if(!row)return '';
-  const sid=String(row.id||'').trim();
-  const code=String(row.code||row.meterCode||'').trim().toLowerCase();
-  switch(collection){
-    case 'buildings': return code||String(row.name||'').trim().toLowerCase();
-    case 'sources': return code||String(row.name||'').trim().toLowerCase();
-    case 'units': return `${String(row.buildingId||'').trim()}|${code||String(row.unitNumber||'').trim().toLowerCase()}`;
-    case 'subscribers': return code||`${String(row.unitId||'').trim()}|${String(row.name||'').trim().toLowerCase()}`;
-    case 'meters': return code||String(row.subscriberId||'').trim();
-    case 'periods': return `${String(row.startDate||'')}|${String(row.endDate||'')}`;
-    case 'readings': return `${String(row.periodId||'')}|${String(row.meterId||'')}`;
-    case 'energyReadings': return `${String(row.periodId||'')}|${String(row.sourceId||'')}`;
-    case 'waterSummary': return `${String(row.periodId||'')}|${String(row.key||row.type||'')}`;
-    default: return sid;
-  }
-}
-function dedupeRows(collection,rows){
-  const out=[],seen=new Set();
-  for(const row of (rows||[])){
-    const k=rowNaturalKey(collection,row);
-    if(k && seen.has(k)) continue;
-    if(k) seen.add(k);
-    out.push(row);
-  }
-  return out;
-}
-function dedupeAllLoadedData(){
-  for(const c of Object.keys(state.data||{})){
-    if(Array.isArray(state.data[c])) state.data[c]=dedupeRows(c,state.data[c]);
-  }
-}
-
 function upsertLocal(c,row){const a=state.data[c]||[];const i=a.findIndex(x=>x.id===row.id);if(i>=0)a[i]={...a[i],...row};else a.push(row);state.data[c]=a;state.loaded=true;}
 function removeLocal(c,id){state.data[c]=(state.data[c]||[]).filter(x=>x.id!==id);state.loaded=true;}
-
-async function loadResidentData(force=false){
-  // Refresh the account-to-resident binding first. A resident must be able to log in
-  // immediately after the administrator links the account, without relying on stale state.
-  const memberSnap=await getDoc(orgDoc('members',state.user.uid));
-  const member=memberSnap.exists()?{id:memberSnap.id,...memberSnap.data()}:{};
-  state.profile={...state.profile,...member};
-  if(state.loaded&&!force)return;
-  const sid=member.residentSubscriberId||member.residentId||member.linkedSubscriberId||member.subscriberId||null;
-  if(sid) state.profile.residentSubscriberId=sid;
-
-  const reset=['members','approvalRequests','auditLogs','costs','fundRevenues','fundWithdrawals','subscribers','units','buildings','meters','readings','ledger','payments','debts','contributions'];
-  for(const c of reset) state.data[c]=[];
-
-  // Residents only need these global read-only datasets. Use allSettled so one stale
-  // or not-yet-deployed security rule cannot cause nine cascading unhandled errors.
-  const publicCollections=['periods','sources','energyReadings','waterSummary'];
-  const publicResults=await Promise.allSettled(publicCollections.map(async c=>{
-    const snap=await getDocs(orgCollection(c));
-    return [c,dedupeRows(c,snap.docs.map(d=>({id:d.id,...d.data()})))];
-  }));
-  for(let i=0;i<publicResults.length;i++){
-    const r=publicResults[i],c=publicCollections[i];
-    if(r.status==='fulfilled') state.data[c]=r.value[1];
-    else { state.data[c]=[]; console.warn(`Resident read blocked for ${c}:`,r.reason); }
-  }
-
-  if(!sid){state.loaded=true;return;}
-
-  const subSnap=await getDoc(orgDoc('subscribers',sid));
-  if(!subSnap.exists()){state.loaded=true;return;}
-  const sub={id:subSnap.id,...subSnap.data()};
-  state.data.subscribers=[sub];
-
-  // Load only the resident's unit/building and meter chain.
-  if(sub.unitId){
-    try{
-      const us=await getDoc(orgDoc('units',sub.unitId));
-      if(us.exists()){
-        const u={id:us.id,...us.data()};state.data.units=[u];
-        if(u.buildingId){const bs=await getDoc(orgDoc('buildings',u.buildingId));if(bs.exists())state.data.buildings=[{id:bs.id,...bs.data()}];}
-      }
-    }catch(e){console.warn('Resident unit/building read blocked:',e);}
-  }
-
-  try{
-    const meterSnap=await getDocs(query(orgCollection('meters'),where('subscriberId','==',sid)));
-    state.data.meters=dedupeRows('meters',meterSnap.docs.map(d=>({id:d.id,...d.data()})));
-  }catch(e){console.warn('Resident meters read blocked:',e);}
-
-  // A resident only needs readings belonging to their own meter(s).
-  for(const meter of state.data.meters){
-    try{
-      const rSnap=await getDocs(query(orgCollection('readings'),where('meterId','==',meter.id)));
-      state.data.readings.push(...rSnap.docs.map(d=>({id:d.id,...d.data()})));
-    }catch(e){console.warn(`Resident readings read blocked for meter ${meter.id}:`,e);}
-  }
-  state.data.readings=dedupeRows('readings',state.data.readings);
-
-  const ownQueries=[
-    ['ledger','ledger'],['payments','payments'],['debts','debts']
-  ];
-  for(const [collection,key] of ownQueries){
-    try{
-      const snap=await getDocs(query(orgCollection(collection),where('subscriberId','==',sid)));
-      state.data[key]=dedupeRows(collection,snap.docs.map(d=>({id:d.id,...d.data()})));
-    }catch(e){console.warn(`Resident ${collection} read blocked:`,e);}
-  }
-  // Residents can see all operating expenses and resident contributions for the building system.
-  // They remain read-only; payments, debts and ledger stay private to the linked resident.
-  for(const collection of ['costs','contributions']){
-    try{
-      const snap=await getDocs(orgCollection(collection));
-      state.data[collection]=dedupeRows(collection,snap.docs.map(d=>({id:d.id,...d.data()})));
-    }catch(e){console.warn(`Resident ${collection} read blocked:`,e);}
-  }
-  // Some legacy contribution records use residentSubscriberId; the full collection load above
-  // already includes them, so no second query is needed.
-
-  dedupeAllLoadedData();
-  state.loaded=true;
-}
-async function ensureCurrentPeriodMarker(){
-  if(!can('admin','manager')) return;
-  const periods=latestPeriods(); if(!periods.length) return;
-  const current=periods[0];
-  const wrong=periods.filter(p=>!!p.isCurrent!==sameId(p.id,current.id));
-  if(!wrong.length && current.isCurrent===true) return;
-  const batch=writeBatch(db);
-  for(const p of periods){const want=sameId(p.id,current.id); if(!!p.isCurrent!==want) batch.update(orgDoc('periods',p.id),{isCurrent:want,updatedAt:serverTimestamp(),updatedBy:state.user.uid});}
-  if(wrong.length) await batch.commit();
-  for(const p of periods) p.isCurrent=sameId(p.id,current.id);
-}
 
 async function loadData(force=false){
   if(state.loaded&&!force)return;
   if(state.loading)return;
   state.loading=true;
   try{
-    if(state.profile?.role==='resident'){await loadResidentData(force);invalidateFinancialSeriesCache();return;}
     const readable=COLLECTIONS.filter(c=>state.profile?.role==='admin'||!['members','approvalRequests','auditLogs'].includes(c));
-    const results=await Promise.all(readable.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,dedupeRows(c,snap.docs.map(d=>({id:d.id,...d.data()})))]}));
+    const results=await Promise.all(readable.map(async c=>{const snap=await getDocs(orgCollection(c));return [c,snap.docs.map(d=>({id:d.id,...d.data()}))]}));
     for(const [c,rows] of results)state.data[c]=rows;
     if(state.profile?.role!=='admin'){state.data.members=[];state.data.approvalRequests=[];state.data.auditLogs=[];}
-    dedupeAllLoadedData();
     state.loaded=true;
-    invalidateFinancialSeriesCache();
     await repairEntityLinks();
-    await ensureCurrentPeriodMarker();
   } finally{state.loading=false;}
 }
 
@@ -457,6 +264,7 @@ async function commitOps(ops){
     for(const op of ops.slice(i,i+400)) op(batch);
     await batch.commit();
   }
+  if(state.user&&state.profile) await addAudit('تعديل جماعي','','',`تنفيذ ${ops.length} عملية على البيانات`);
 }
 async function syncEmbeddedDefaults(){
   if(!can('admin')) return;
@@ -578,28 +386,19 @@ function renderHistorical(){
 
 function setTitle(title,subtitle){$('#page-title').textContent=title;$('#page-subtitle').textContent='';$('#crumbText').textContent=VIEW_NAMES[state.view]||title;}
 function setActiveNav(){
-  const residentNav=$('.nav-item[data-view="subscribers"]');
-  if(residentNav){ residentNav.querySelector('span:nth-child(2)')?.replaceChildren(document.createTextNode(state.profile?.role==='resident'?'كشف حسابي':'السكان')); }
   $$('.nav-item[data-view]').forEach(el=>{const v=el.dataset.view;el.style.display=canView(v)?'':'none';el.classList.toggle('active',v===state.view);});
-  bindSidebarNavigation();
   const setBtn=$('.nav-item[data-view="settings"]'); if(setBtn){setBtn.querySelector('.approval-count')?.remove(); const n=(state.data.approvalRequests||[]).filter(x=>x.status==='pending').length; if(can('admin')&&n){const b=document.createElement('span');b.className='approval-count';b.textContent=n;setBtn.appendChild(b);}}
   $('#quickPeriod')?.classList.toggle('hidden',!['admin','manager','accountant'].includes(state.profile?.role));
 }
 function render(){
   if(state.profile?.role==='resident'){return renderResidentView(state.view);}
-  if(state.profile?.role==='viewer' && state.view==='dashboard'){return renderReadOnlyDashboard();}
   const fn={dashboard:renderDashboard,periods:renderPeriods,readings:renderReadings,energy:renderEnergy,costs:renderCosts,guard:renderGuard,contributions:renderContributions,subscribers:renderSubscribers,payments:renderPayments,debts:renderDebts,fund:renderFund,reports:renderReports,settings:renderSettings,guide:showGuide,historical:renderHistorical}[state.view]||renderDashboard;fn();
 }
 async function navigate(view,periodId=null,force=false){
   if(!state.profile||state.profile.role==='pending'){renderPending();return;}
   if(!canView(view)){toast('لا تملك صلاحية فتح هذا القسم','error');return;}
-  state.view=view;if(periodId)state.periodId=periodId;setActiveNav();
-  const appEl=$('#app');
-  appEl?.classList.add('view-fade-out');
-  await loadData(force);
-  render();
-  if(appEl){appEl.classList.remove('view-fade-out');appEl.classList.add('view-fade-in');requestAnimationFrame(()=>setTimeout(()=>appEl.classList.remove('view-fade-in'),220));}
-  $('#sidebar')?.classList.remove('open');
+  state.view=view;if(periodId)state.periodId=periodId;setActiveNav();await loadData(force);render();$('#sidebar')?.classList.remove('open');
+  addAudit('قراءة',view,'',`فتح قسم ${VIEW_NAMES[view]||view}`);
 }
 
 function latestPeriods(){return [...(state.data.periods||[])].sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));}
@@ -639,7 +438,7 @@ function autoWaterPrice(pid){
   const contributions=utilityDiscount+expenseDiscount;
   const net=Math.max(0,energy+expense-utilityDiscount);
   const raw=water>0?net/water:0;
-  return raw>0?raw:0;
+  return raw>0?Math.ceil(raw):0;
 }
 function currentTotals(pid){
   const p=periodById(pid), rs=readingsForPeriod(pid), ers=energyForPeriod(pid), cs=costsForPeriod(pid);
@@ -655,11 +454,11 @@ function currentTotals(pid){
   const contributions=utilityDiscount+expenseDiscount;
   const net=Math.max(0,energy+expense-utilityDiscount);
   const raw=water>0?net/water:0;
-  // The approved price is always derived from the historical/current raw price and rounded to one decimal.
-  // Never trust the old stored weekly price here, because previous versions could have saved a round-up value.
-  const autoApplied=raw>0?roundTenthValue(raw):0;
+  const autoApplied=raw>0?Math.ceil(raw):0;
+  // The weekly price is automatically recalculated from live costs/contributions.
+  // Existing stored waterUnitPrice is kept only as historical snapshot; autoApplied is the current value.
   const manualPeriod=(p?.manualWaterUnitPrice!=null?num(p.manualWaterUnitPrice):null);
-  const applied=manualPeriod!=null?roundTenthValue(manualPeriod):autoApplied;
+  const applied=manualPeriod!=null?manualPeriod:autoApplied;
   return {period:p,readings:rs,energyReadings:ers,costs:cs,waterTotal:water,energyCost:energy,baseExpense,expenseDiscount,extraCost:expense,utilityDiscount,contributionsTotal:contributions,netCost:net,rawPrice:raw,autoAppliedPrice:autoApplied,appliedPrice:applied,waterBreakdown:breakdown,externalWater,manualPeriodPrice:manualPeriod};
 }
 async function syncPeriodWaterPrice(pid){
@@ -680,7 +479,7 @@ async function syncPeriodWaterPrice(pid){
       const manual=readingManualPrice(r);
       if(manual!=null) continue;
       const consumption=Math.max(0,num(r.currentReading)-num(r.previousReading))/1000;
-      const charge=waterChargeAmount(consumption,t.appliedPrice);
+      const charge=consumption*t.appliedPrice;
       ops.push(b=>b.update(orgDoc('readings',r.id),{unitPrice:t.appliedPrice,chargeAmount:charge,updatedAt:serverTimestamp(),updatedBy:state.user.uid}));
       const led=(state.data.ledger||[]).find(x=>x.referenceId===r.id&&x.transactionType==='WATER');
       if(led) ops.push(b=>b.update(orgDoc('ledger',led.id),{debit:charge,updatedAt:serverTimestamp(),updatedBy:state.user.uid}));
@@ -712,178 +511,31 @@ async function ensureWaterSummaryForPeriod(pid){
   const existing=waterSummaryForPeriod(pid);if(existing.some(x=>x.key==='external'))return;if(!can('admin','manager','accountant','operator'))return;const p=periodById(pid);if(!p)return;const prior=[...(state.data.waterSummary||[])].filter(x=>x.key==='external'&&x.currentReading!=null&&x.periodId!==pid).map(x=>({x,p:periodById(x.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.x?.currentReading??null;await fsSetDoc(doc(orgCollection('waterSummary')),{periodId:pid,key:'external',label:'الخارجي',type:'external',buildingId:null,previousReading:prior,currentReading:null,consumption:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:state.user.uid});state.loaded=false;await loadData(true);
 }
 
-function residentLedgerAmountForPeriod(id,periodId,type){
-  return (state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,periodId)&&x.transactionType===type)
-    .reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
-}
-function residentPaymentForPeriod(id,periodId){
-  return (state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,periodId)&&x.transactionType==='PAYMENT')
-    .reduce((a,x)=>a+num(x.credit)-num(x.debit),0);
-}
-function residentWaterStoredForPeriod(id,p){
-  const meterIds=new Set((state.data.meters||[]).filter(m=>sameId(m.subscriberId,id)).map(m=>m.id));
-  const rr=(state.data.readings||[]).find(r=>sameId(r.periodId,p.id)&&meterIds.has(r.meterId));
-  const consumption=rr?.consumption!=null?num(rr.consumption):(rr?.currentReading!=null&&rr?.previousReading!=null?Math.max(0,num(rr.currentReading)-num(rr.previousReading))/1000:0);
-  const price=readingManualPrice(rr)??currentTotals(p.id).appliedPrice;
-  // Use the same saved weekly price and reading used by the admin view.
-  // Never reuse an old rounded ledger amount for historical resident displays.
-  const amount=consumption*num(price);
-  return {amount,consumption,price};
-}
-function residentAccountSeries(id){
-  const s=(state.data.subscribers||[]).find(x=>sameId(x.id,id));
-  if(!s)return [];
-  let running=0;
-  return allPeriodsAscending().map(p=>{
-    const carry=running;
-    const openingDebt=residentLedgerAmountForPeriod(id,p.id,'DEBT');
-    const water=residentWaterStoredForPeriod(id,p);
-    const guard=residentLedgerAmountForPeriod(id,p.id,'SERVICE');
-    const other=(state.data.ledger||[]).filter(x=>sameId(x.subscriberId,id)&&sameId(x.periodId,p.id)
-      && !['PAYMENT','WATER','DEBT'].includes(x.transactionType)
-      && !(x.transactionType==='SERVICE'&&x.serviceCode==='GUARD')
-    ).reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
-    const services=guard;
-    const charges=openingDebt+water.amount+services+other;
-    const payments=residentPaymentForPeriod(id,p.id);
-    const before=carry+charges;
-    const balance=before-payments;
-    running=balance;
-    return {s,p,previousBalance:carry,previousDebt:carry+openingDebt,currentConsumption:water.consumption,currentWater:water.amount,
-      guard:services,services,other,periodPayments:payments,finalBeforePayments:before,finalBalance:balance,
-      debt:Math.max(0,balance),creditCarry:Math.max(0,-balance),appliedPrice:water.price||0};
-  });
-}
-function residentAccountSeriesRow(id,periodId){
-  const rows=residentAccountSeries(id);return rows.find(x=>sameId(x.p.id,periodId))||rows[rows.length-1]||null;
-}
-function renderResidentAccountReport(){
-  const s=residentSelected(),periods=allPeriodsAscending(),selected=selectedPeriod();
-  if(!s){setTitle('حسابي','');$('#app').innerHTML=`<section class="panel">${empty('لم يتم ربط حسابك بساكن بعد','اطلب من مدير النظام ربط حسابك باسم الساكن.')}</section>`;return;}
-  const series=residentAccountSeries(s.id);
-  const current=series.find(x=>sameId(x.p.id,selected?.id))||series[series.length-1];
-  const info=subscriberRow(s);
-  setTitle('حسابي', 'كشف الحساب للساكن المرتبط — للعرض فقط.');
-  const rows=periods.map(p=>{
-    const x=series.find(y=>sameId(y.p.id,p.id));
-    return `<tr class="${sameId(p.id,selected?.id)?'selected-account-row':''}">
-      <td><b>${safe(p.label||'أسبوع')}</b><br><small>${fmtDate(p.startDate)} → ${fmtDate(p.endDate)}</small></td>
-      <td>${money(x?.previousDebt||0)}</td>
-      <td>${x?.currentConsumption!=null?fmt(x.currentConsumption,3)+' كوب':'—'}</td>
-      <td>${money(x?.currentWater||0)}</td>
-      <td>${money(x?.guard||0)}</td>
-      <td>${money(x?.other||0)}</td>
-      <td>${money(x?.periodPayments||0)}</td>
-      <td>${money(x?.finalBeforePayments||0)}</td>
-      <td class="strong">${money(x?.finalBalance||0)}</td>
-    </tr>`;
-  }).join('');
-  $('#app').innerHTML=`<section class="panel">
-    <div class="resident-report-head account-resident-header"><div><span class="code">${safe(s.code||'')}</span><h2>${safe(s.name||'')}</h2><p>${safe(info.buildingName)} · ${safe(info.unitCode)} · ${safe(s.phone||'بدون هاتف')}</p></div><div class="balance-box"><span>الرصيد / المديونية</span><b>${money(current?.finalBalance||0)}</b></div></div>
-    <div class="panel-head"><div><h3>كشف حسابي</h3><p class="muted">نفس الحساب المسجل بالنظام، من الأقدم إلى الأحدث. لا توجد حسبة جديدة من حساب الساكن.</p></div>${residentWeekSelectHtml('residentWeekSelect',selected,periods)}</div>
-    <div class="table-wrap resident-ledger-table"><table class="table account-report-table"><thead><tr><th>الأسبوع</th><th>المديونية السابقة</th><th>سحب المياه</th><th>قيمة المياه</th><th>الحارس</th><th>مصاريف أخرى</th><th>الدفعات</th><th>قبل الدفعات</th><th>الرصيد / المديونية</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا يوجد كشف','')}</td></tr>`}</tbody></table></div>
-    <div class="section-note" style="margin-top:12px"><b>سعر كوب المياه:</b> ${current?waterPriceText(current.appliedPrice):'—'} للأسبوع المختار، وهو نفس السعر المحفوظ في النظام بدون إعادة حساب.</div>
-  </section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentAccountReport();};
-}
 function renderResidentView(view){
   if(view==='dashboard') return renderResidentDashboard();
   if(view==='energy') return renderResidentEnergy();
   if(view==='readings') return renderResidentWater();
   if(view==='costs') return renderResidentCosts();
   if(view==='contributions') return renderResidentContributions();
-  if(view==='payments') return renderResidentPayments();
-  if(view==='debts') return renderResidentDebts();
-  if(view==='subscribers') return renderResidentAccountReport();
+  if(view==='subscribers') return renderResidentSubscribers();
   return renderResidentDashboard();
 }
-function residentSelected(){
-  const sid=state.profile?.residentSubscriberId||state.profile?.residentId;
-  return (state.data.subscribers||[]).find(s=>sameId(s.id,sid));
-}
-function residentNeedsLinkNotice(){return !residentSelected();}
+function residentSelected(){return (state.data.subscribers||[]).find(s=>sameId(s.id,state.profile?.residentSubscriberId));}
 function residentEnergyRateText(){const p=selectedPeriod();const rates=[...new Set((p?energyForPeriod(p.id):[]).map(r=>num(r.pricePerKwh)).filter(v=>v>0))];return rates.length===1?money(rates[0]):rates.length>1?'حسب المصادر':'—';}
 function residentPeriodList(){return latestPeriods();}
-function renderReadOnlyDashboard(){
-  const periods=latestPeriods();
-  if(!state.periodId) state.periodId=periods[0]?.id||null;
-  const p=selectedPeriod()||periods[0]||null;
-  const resident=state.profile?.role==='resident';
-  const s=resident?residentSelected():null;
-  // Dashboard stat for a resident/viewer: read the price the manager already
-  // approved and stored on the period (period.waterUnitPrice), never recompute
-  // it live — a resident session only has its own reading loaded, so a live
-  // currentTotals() recompute here produced a wrong price (see currentWaterCharge).
-  const price=p?(p.waterUnitPrice!=null?num(p.waterUnitPrice):(resident?null:currentTotals(p.id).appliedPrice)):null;
-  const totalWater=p?.totalWaterConsumption;
-  setTitle('الرئيسية', resident ? 'اختر الأسبوع لرؤية بياناتك المسجلة فقط.' : 'اختر الأسبوع لرؤية البيانات المسجلة فقط.');
-  const name=resident?(s?.name||'بالساكن'):(state.user?.displayName?.split(' ')[0]||'بك');
-  $('#app').innerHTML=`<section class="welcome"><div class="welcome-copy"><div class="kicker">عمارة الأمين • ${resident?'حساب الساكن':'وضع المشاهدة'}</div><h2>أهلاً ${safe(name)} 👋</h2><p class="muted">العرض فقط — لا يتم إنشاء أي حسبة جديدة من هذا الحساب.</p></div></section>
-  <section class="panel resident-week-panel"><div class="panel-head"><div><h3>الأسبوع المعروض</h3><p class="muted">اختر أي أسبوع لعرض نفس البيانات المحفوظة في النظام لذلك الأسبوع.</p></div><select id="readOnlyHomeWeekSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${sameId(x.id,p?.id)?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select></div></section>
-  <section class="stats"><div class="stat"><div class="stat-label">سعر كوب المياه</div><div class="stat-value">${price==null?'—':waterPriceText(price)}</div><div class="stat-foot">نفس السعر المسجل في النظام</div></div><div class="stat"><div class="stat-label">إجمالي استهلاك المياه</div><div class="stat-value">${totalWater==null?'—':fmt(totalWater,3)}</div><div class="stat-foot">البيانات المسجلة للأسبوع</div></div><div class="stat"><div class="stat-label">الأسبوع المختار</div><div class="stat-value">${p?fmtDate(p.startDate):'—'}</div><div class="stat-foot">${safe(p?.label||'—')}</div></div>${resident?`<div class="stat"><div class="stat-label">الرصيد / المديونية</div><div class="stat-value">${s?money(residentAccountSeries(s.id).find(x=>sameId(x.p.id,p?.id))?.finalBalance??0):'—'}</div><div class="stat-foot">حسب كشف الحساب المحفوظ</div></div>`:`<div class="stat"><div class="stat-label">عدد السكان</div><div class="stat-value">${fmt((state.data.subscribers||[]).filter(x=>x.active!==false&&x.type!=='خارجي').length,0)}</div><div class="stat-foot">للعرض فقط</div></div>`}</section>`;
-  $('#readOnlyHomeWeekSelect')?.addEventListener('change',e=>{state.periodId=e.target.value;renderReadOnlyDashboard();});
+function renderResidentDashboard(){
+  const s=residentSelected();const p=selectedPeriod();const t=p?currentTotals(p.id):null;setTitle('الرئيسية','');$('#app').innerHTML=`<section class="welcome"><div class="welcome-copy"><div class="kicker">عمارة الأمين • حساب الساكن</div><h2>أهلاً ${safe(s?.name||'بالساكن')} 👋</h2><p class="muted">هذا الحساب للعرض فقط ولا يمكن تعديل البيانات.</p></div></section><section class="stats"><div class="stat"><div class="stat-label">سعر كيلو الكهرباء</div><div class="stat-value">${residentEnergyRateText()}</div><div class="stat-foot">القيمة المعتمدة من النظام</div></div><div class="stat"><div class="stat-label">سعر كوب المياه</div><div class="stat-value">${t?.appliedPrice?money(t.appliedPrice):'—'}</div><div class="stat-foot">لآخر أسبوع</div></div><div class="stat"><div class="stat-label">آخر أسبوع</div><div class="stat-value">${p?fmtDate(p.startDate):'—'}</div><div class="stat-foot">اختر الأسبوع من قسم المياه</div></div><div class="stat"><div class="stat-label">مديونيتك</div><div class="stat-value">${s?money(subscriberRow(s).debt):'—'}</div><div class="stat-foot">للعرض فقط</div></div></section>`;
 }
-function renderResidentDashboard(){ return renderReadOnlyDashboard(); }
-function residentWeekSelectHtml(id,p,periods){
-  return `<select id="${id}" class="period-select">${periods.map(x=>`<option value="${x.id}" ${sameId(x.id,p?.id)?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)}</option>`).join('')}</select>`;
-}
-function renderResidentEnergy(){
-  const periods=residentPeriodList(),p=selectedPeriod();
-  setTitle('الكهرباء','عرض البيانات المسجلة للأسبوع المختار فقط.');
-  const rows=p?energyForPeriod(p.id):[];
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>الكهرباء والمولدات</h2><p class="muted">لا توجد حسبة جديدة هنا؛ يتم عرض القيم المحفوظة في النظام.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>المصدر</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>الاستهلاك</th><th>سعر الكيلو</th><th>التكلفة</th></tr></thead><tbody>${rows.map(r=>{const src=(state.data.sources||[]).find(x=>sameId(x.id,r.sourceId));return `<tr><td>${safe(src?.name||'—')}</td><td>${r.previousReading==null?'—':fmt(r.previousReading,3)}</td><td>${r.currentReading==null?'—':fmt(r.currentReading,3)}</td><td>${r.consumption==null?'—':fmt(r.consumption,3)}</td><td>${r.pricePerKwh==null?'—':fmt(r.pricePerKwh,1)} ₪</td><td>${r.cost==null?'—':money(r.cost)}</td></tr>`}).join('')||`<tr><td colspan="6">${empty('لا توجد قراءات','')}</td></tr>`}</tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentEnergy();};
-}
-function renderResidentWater(){
-  const s=residentSelected(), periods=residentPeriodList(), p=selectedPeriod();
-  const meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,s?.id));
-  const r=p?(state.data.readings||[]).find(y=>sameId(y.periodId,p.id)&&sameId(y.meterId,meter?.id)):null;
-  const storedConsumption=r?.currentReading!=null&&r?.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:(r?.consumption!=null?num(r.consumption):null);
-  // Prefer the exact figures the admin's weekly calculation already stored on
-  // the reading (unitPrice/chargeAmount). Never recompute via currentTotals()
-  // here: a resident session only has its own reading loaded, so that recompute
-  // used near-empty data and showed the resident a wrong, inflated price/charge.
-  const storedPrice=r?.unitPrice!=null?num(r.unitPrice):(r?(readingManualPrice(r)??(p?.waterUnitPrice!=null?num(p.waterUnitPrice):null)):null);
-  const storedCharge=r?.chargeAmount!=null?num(r.chargeAmount):(storedConsumption!=null&&storedPrice!=null?storedConsumption*storedPrice:null);
-  setTitle('المياه','عرض القراءة والقيمة المحفوظة للساكن فقط.');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>قراءات المياه — ${safe(s?.name||'')}</h2><p class="muted">لا توجد حسبة جديدة هنا؛ يتم عرض القيم المسجلة في النظام كما هي.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>الأسبوع</th><th>السابقة</th><th>الحالية</th><th>الاستهلاك</th><th>سعر الكوب</th><th>القيمة</th></tr></thead><tbody><tr><td>${safe(p?.label||'—')}<br><small>${p?fmtDate(p.startDate):'—'} → ${p?fmtDate(p.endDate):'—'}</small></td><td>${r?.previousReading==null?'—':fmt(r.previousReading,3)}</td><td>${r?.currentReading==null?'—':fmt(r.currentReading,3)}</td><td>${storedConsumption==null?'—':fmt(storedConsumption,3)} كوب</td><td>${storedPrice==null?'—':waterPriceText(storedPrice)}</td><td>${storedCharge==null?'—':money(storedCharge)}</td></tr></tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentWater();};
-}
-function renderResidentCosts(){
-  const periods=residentPeriodList(),p=selectedPeriod();
-  const rows=(state.data.costs||[]).filter(x=>!p||sameId(x.periodId,p.id)).filter(x=>x.direction!=='credit').sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  setTitle('المصاريف والطوارئ',p?`مصاريف الأسبوع ${p.label||''} — للعرض فقط.`:'للعرض فقط.');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>المصاريف والطوارئ</h2><p class="muted">تظهر مصاريف الأسبوع المختار كما هي مسجلة في النظام.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th><th>التوزيع</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(c.type||'—')}</td><td>${safe(c.description||'—')}</td><td>${money(c.amount)}</td><td>${safe(c.allocationLabel||'—')}</td></tr>`).join(''):`<tr><td colspan="5">${empty('لا توجد مصاريف','')}</td></tr>`}</tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentCosts();};
-}
-function renderResidentContributions(){
-  const periods=residentPeriodList(),p=selectedPeriod();
-  const rows=(state.data.contributions||[]).filter(c=>!p||sameId(c.periodId,p.id)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  setTitle('المساهمات','مساهمات وخصومات الأسبوع المختار للعرض فقط.');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>المساهمات والخصومات</h2><p class="muted">تظهر جميع المساهمات والخصومات المسجلة في الأسبوع المختار.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>نوع المساهمة</th><th>الساكن</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>${rows.length?rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(contributionLabel(c))}</td><td>${safe((state.data.subscribers||[]).find(x=>sameId(x.id,c.subscriberId))?.name||'على مستوى العمارة')}</td><td>${money(c.amount)}</td><td>${safe(c.description||'—')}</td></tr>`).join(''):`<tr><td colspan="5">${empty('لا توجد مساهمات','')}</td></tr>`}</tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentContributions();};
-}
-function renderResidentPayments(){
-  const s=residentSelected(),periods=residentPeriodList(),p=selectedPeriod();
-  const pays=(state.data.payments||[]).filter(x=>sameId(x.subscriberId,s?.id)&&(!p||!x.periodId||sameId(x.periodId,p.id))).sort((a,b)=>String(b.paymentDate||'').localeCompare(String(a.paymentDate||'')));
-  setTitle('دفعاتي',p?`دفعات حسابك في ${p.label||'الأسبوع المختار'}.`:'دفعات حسابك فقط.');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>دفعاتي</h2><p class="muted">لا تظهر دفعات أي ساكن آخر.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>المبلغ</th><th>الطريقة</th><th>الإيصال</th><th>الأسبوع</th></tr></thead><tbody>${pays.length?pays.map(pay=>`<tr><td>${fmtDate(pay.paymentDate)}</td><td class="strong">${money(pay.amount)}</td><td>${safe(pay.method||'—')}</td><td>${safe(pay.receiptNumber||'—')}</td><td>${safe(periodById(pay.periodId)?.label||'دفعة عامة')}</td></tr>`).join(''):`<tr><td colspan="5">${empty('لا توجد دفعات في الأسبوع المختار','')}</td></tr>`}</tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentPayments();};
-}
-function renderResidentDebts(){
-  const s=residentSelected(),periods=residentPeriodList(),p=selectedPeriod();
-  const debts=(state.data.debts||[]).filter(d=>sameId(d.subscriberId,s?.id)&&(!p||!d.periodId||sameId(d.periodId,p.id))).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  const total=debts.reduce((a,d)=>a+Math.max(0,num(d.amount)-num(d.paidAmount)),0);
-  setTitle('ديوني',p?`ديون حسابك في ${p.label||'الأسبوع المختار'}.`:'ديون حسابك فقط.');
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>ديوني</h2><p class="muted">بيانات الديون الخاصة بالحساب المرتبط فقط.</p></div>${residentWeekSelectHtml('residentWeekSelect',p,periods)}</div><div class="money-grid"><div class="money-card"><small>إجمالي المتبقي</small><b>${money(total)}</b></div></div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>البيان</th><th>الدين</th><th>المسدد</th><th>المتبقي</th></tr></thead><tbody>${debts.length?debts.map(d=>`<tr><td>${fmtDate(d.date)}</td><td>${safe(d.description||'دين سابق')}</td><td>${money(d.amount)}</td><td>${money(d.paidAmount||0)}</td><td class="strong">${money(Math.max(0,num(d.amount)-num(d.paidAmount)))}</td></tr>`).join(''):`<tr><td colspan="5">${empty('لا توجد ديون في الأسبوع المختار','')}</td></tr>`}</tbody></table></div></section>`;
-  $('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentDebts();};
-}
+function renderResidentEnergy(){const p=selectedPeriod();setTitle('الكهرباء','سعر الكيلو ومعلومات المولدات للعرض فقط.');const rows=p?energyForPeriod(p.id):[];$('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>الكهرباء والمولدات</h2><p class="muted">يمكنك معرفة سعر الكيلو والقراءات العامة دون تعديل.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>المصدر</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>الاستهلاك</th><th>سعر الكيلو</th></tr></thead><tbody>${rows.map(r=>{const src=(state.data.sources||[]).find(x=>x.id===r.sourceId);return `<tr><td>${safe(src?.name||'—')}</td><td>${fmt(r.previousReading,3)}</td><td>${r.currentReading==null?'—':fmt(r.currentReading,3)}</td><td>${r.consumption==null?'—':fmt(r.consumption,3)}</td><td>${r.pricePerKwh==null?'—':money(r.pricePerKwh)}</td></tr>`}).join('')||`<tr><td colspan="5">${empty('لا توجد قراءات','')}</td></tr>`}</tbody></table></div></section>`;}
+function renderResidentWater(){const s=residentSelected();const periods=residentPeriodList();const p=selectedPeriod();const meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,s?.id));const shown=p?periods.filter(x=>sameId(x.id,p.id)):[];const rows=shown.map(x=>{const r=(state.data.readings||[]).find(y=>sameId(y.periodId,x.id)&&sameId(y.meterId,meter?.id));const cons=r&&r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:null;return `<tr><td>${safe(x.label||'أسبوع')}<br><small>${fmtDate(x.startDate)} → ${fmtDate(x.endDate)}</small></td><td>${r?.previousReading==null?'—':fmt(r.previousReading,3)}</td><td>${r?.currentReading==null?'—':fmt(r.currentReading,3)}</td><td>${cons==null?'—':fmt(cons,3)} كوب</td><td>${r?.unitPrice==null?'—':money(r.unitPrice)}</td></tr>`}).join('');setTitle('المياه','عرض قراءاتك فقط.');$('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>قراءات المياه — ${safe(s?.name||'')}</h2><p class="muted">البيانات تخص حسابك فقط.</p></div><select id="residentWeekSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p?.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)}</option>`).join('')}</select></div><div class="table-wrap"><table class="table"><thead><tr><th>الأسبوع</th><th>السابقة</th><th>الحالية</th><th>الاستهلاك</th><th>سعر الكوب</th></tr></thead><tbody>${rows||`<tr><td colspan="5">${empty('لا توجد قراءات','')}</td></tr>`}</tbody></table></div></section>`;$('#residentWeekSelect').onchange=e=>{state.periodId=e.target.value;renderResidentWater();};}
+function renderResidentCosts(){setTitle('المصاريف والطوارئ','عرض لفهم البنود التي أثرت على كشفك.');const rows=(state.data.costs||[]).filter(c=>c.periodId);$('#app').innerHTML=`<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>الأسبوع</th><th>البند</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>${rows.map(c=>`<tr><td>${fmtDate(periodById(c.periodId)?.startDate)}</td><td>${safe(c.type||'—')}</td><td>${money(c.amount)}</td><td>${safe(c.description||'—')}</td></tr>`).join('')||`<tr><td colspan="4">${empty('لا توجد مصاريف','')}</td></tr>`}</tbody></table></div></section>`;}
+function renderResidentContributions(){setTitle('المساهمات','عرض المساهمات والخصومات فقط.');const rows=state.data.contributions||[];$('#app').innerHTML=`<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>البيان</th></tr></thead><tbody>${rows.map(c=>`<tr><td>${fmtDate(c.date)}</td><td>${safe(contributionLabel(c))}</td><td>${money(c.amount)}</td><td>${safe(c.description||'—')}</td></tr>`).join('')||`<tr><td colspan="4">${empty('لا توجد مساهمات','')}</td></tr>`}</tbody></table></div></section>`;}
 function renderResidentSubscribers(){const s=residentSelected();setTitle('السكان','يظهر لك اسمك فقط.');$('#app').innerHTML=`<section class="panel"><div class="table-wrap"><table class="table"><thead><tr><th>الاسم</th></tr></thead><tbody><tr><td><b>${safe(s?.name||'لم يتم ربط حسابك بساكن بعد')}</b></td></tr></tbody></table></div></section>`;}
 
 function renderDashboard(){
-  setTitle('الرئيسية','');const periods=latestPeriods(),latest=periods[0];const subs=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');const totals=latest?currentTotals(latest.id):null;const fundRev=fundRevenueTotal(),fundOut=fundWithdrawalTotal(),residentDebt=residentDebtTotal(),fundBal=fundRev-fundOut-residentDebt,solarQty=solarAvailableQty();
+  setTitle('الرئيسية','');const periods=latestPeriods(),latest=periods[0];const subs=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');const totals=latest?currentTotals(latest.id):null;const fundRev=fundRevenueTotal(),fundOut=fundWithdrawalTotal(),residentDebt=residentDebtTotal(),fundBal=Math.max(0,fundRev-fundOut-residentDebt),solarQty=solarAvailableQty();
   $('#app').innerHTML=`<section class="welcome"><div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 220 160" role="presentation"><rect x="55" y="36" width="110" height="100" rx="8"/><rect x="76" y="16" width="68" height="120" rx="8"/><path d="M111 17v119M76 60h68M76 91h68"/><rect x="91" y="108" width="16" height="28" rx="2"/><rect x="122" y="108" width="16" height="28" rx="2"/><circle cx="111" cy="43" r="8"/></svg></div><div class="welcome-copy"><div class="kicker">عمارة الأمين • الإدارة اليومية</div><h2>أهلاً ${safe(state.user?.displayName?.split(' ')[0]||'بك')} 👋</h2><div class="welcome-actions">${['admin','manager','accountant'].includes(state.profile?.role)?'<button class="btn primary" id="dashNewWeek">+ افتح أسبوعًا</button>':''}${canView('readings')?'<button class="btn ghost" id="dashReadings">إدخال قراءات الماء</button>':''}${canView('fund')?'<button class="btn soft" id="dashFund">فتح الإيرادات و الصندوق</button>':''}</div></div></section>
-  <section class="stats"><div class="stat"><div class="stat-label">السكان النشطون</div><div class="stat-value">${fmt(subs.length,0)}</div><div class="stat-foot">مشترك داخل النظام</div></div><div class="stat"><div class="stat-label">آخر أسبوع</div><div class="stat-value">${latest?fmtDate(latest.startDate):'—'}</div><div class="stat-foot">${latest?statusBadge(latest.status||'Draft'):'لا يوجد'}</div></div><div class="stat"><div class="stat-label">رصيد صندوق العمارة</div><div class="stat-value">${money(fundBal)}</div><div class="stat-foot">إيرادات ${money(fundRev)} − سحب ${money(fundOut)} − مديونية السكان ${money(residentDebt)}</div></div><div class="stat"><div class="stat-label">السولار المتبقي</div><div class="stat-value">${fmt(solarQty,3)} لتر</div><div class="stat-foot">دفعات السولار − المبيعات</div></div></section><section class="stats"><div class="stat"><div class="stat-label">استهلاك المياه</div><div class="stat-value">${totals?fmt(totals.waterTotal,3):'—'}</div><div class="stat-foot">كوب / م³</div></div><div class="stat"><div class="stat-label">سعر الكوب</div><div class="stat-value">${totals&&totals.appliedPrice?waterPriceText(totals.appliedPrice):'—'}</div><div class="stat-foot">السعر المعتمد للكوب</div></div><div class="stat"><div class="stat-label">مجموع المديونية</div><div class="stat-value">${money(subs.reduce((a,s)=>a+num(subscriberRow(s).debt),0))}</div><div class="stat-foot">إجمالي المديونية الحالية للسكان</div></div><div class="stat"><div class="stat-label">حالة الحساب</div><div class="stat-value">${latest?'جاهز':'ابدأ'}</div><div class="stat-foot">${latest?'راجع الأسبوع الحالي':'افتح أول أسبوع'}</div></div></section>
+  <section class="stats"><div class="stat"><div class="stat-label">السكان النشطون</div><div class="stat-value">${fmt(subs.length,0)}</div><div class="stat-foot">مشترك داخل النظام</div></div><div class="stat"><div class="stat-label">آخر أسبوع</div><div class="stat-value">${latest?fmtDate(latest.startDate):'—'}</div><div class="stat-foot">${latest?statusBadge(latest.status||'Draft'):'لا يوجد'}</div></div><div class="stat"><div class="stat-label">رصيد صندوق العمارة</div><div class="stat-value">${money(fundBal)}</div><div class="stat-foot">إيرادات ${money(fundRev)} − سحب ${money(fundOut)} − مديونية السكان ${money(residentDebt)}</div></div><div class="stat"><div class="stat-label">السولار المتبقي</div><div class="stat-value">${fmt(solarQty,3)} لتر</div><div class="stat-foot">دفعات السولار − المبيعات</div></div></section><section class="stats"><div class="stat"><div class="stat-label">استهلاك المياه</div><div class="stat-value">${totals?fmt(totals.waterTotal,3):'—'}</div><div class="stat-foot">كوب / م³</div></div><div class="stat"><div class="stat-label">سعر الكوب</div><div class="stat-value">${totals&&totals.appliedPrice?money(totals.appliedPrice):'—'}</div><div class="stat-foot">السعر المعتمد للكوب</div></div><div class="stat"><div class="stat-label">مجموع المديونية</div><div class="stat-value">${money(subs.reduce((a,s)=>a+num(subscriberRow(s).debt),0))}</div><div class="stat-foot">إجمالي المديونية الحالية للسكان</div></div><div class="stat"><div class="stat-label">حالة الحساب</div><div class="stat-value">${latest?'جاهز':'ابدأ'}</div><div class="stat-foot">${latest?'راجع الأسبوع الحالي':'افتح أول أسبوع'}</div></div></section>
   <section class="grid-2"><div class="panel"><div class="panel-head"><div><h2>طريقة إدخال البيانات</h2></div></div><div class="workflow-grid"><div class="workflow-card"><div class="w-num">١</div><h3>سجّل الكهرباء</h3></div><div class="workflow-card"><div class="w-num">٢</div><h3>سجّل الماء</h3></div><div class="workflow-card"><div class="w-num">٣</div><h3>احسب سعر الكوب</h3></div><div class="workflow-card"><div class="w-num">٤</div><h3>وزّع على السكان</h3></div></div></div><div class="panel"><div class="panel-head"><div><h2>آخر أسبوع</h2></div></div>${latest&&canView('periods')?`<button class="latest" id="dashLatest"><div class="latest-date">${fmtDate(latest.startDate)}</div><div class="latest-main"><b>${safe(latest.label||'أسبوع')}</b><span>${statusBadge(latest.status||'Draft')}</span></div><span class="arrow">←</span></button>`:latest?`<div class="latest disabled"><div class="latest-date">${fmtDate(latest.startDate)}</div><div class="latest-main"><b>${safe(latest.label||'أسبوع')}</b><span>${statusBadge(latest.status||'Draft')}</span></div></div>`:empty('لا يوجد أسبوع بعد','ابدأ بفتح أول أسبوع.')}</div></section>
   `;
   $('#dashNewWeek')?.addEventListener('click',showPeriodForm);$('#dashReadings')?.addEventListener('click',()=>latest?navigate('readings',latest.id):showPeriodForm);$('#dashFund')?.addEventListener('click',()=>navigate('fund'));if(latest)$('#dashLatest')?.addEventListener('click',()=>navigate('periods',latest.id));
@@ -899,23 +551,23 @@ function periodCalculationView(t,breakdown){
   const summaryComplete=!!(ext&&ext.currentReading!=null&&ext.previousReading!=null&&breakdown.buildings.every(b=>b.total>=0));
   const eligible=readingsForPeriod(t.period.id).filter(r=>r.currentReading!=null&&r.previousReading!=null).length;
   const missing=readingsForPeriod(t.period.id).length-eligible;
-  return `<div class="calc-banner"><div><h3>نتيجة هذا الأسبوع</h3><p></p></div><div class="price">${t.appliedPrice?waterPriceText(t.appliedPrice)+' ₪':'لم يُحسب بعد'}</div></div><div class="calc-board"><div class="calc-box"><h3>١) تكلفة الكهرباء والمصاريف</h3><div class="calc-line"><span>الكهرباء من المولدات</span><b>${money(t.energyCost)}</b></div><div class="calc-line"><span>المصاريف والإضافات</span><b>${money(t.extraCost)}</b></div><div class="calc-total"><span>صافي تكلفة التشغيل</span><span>${money(t.netCost)}</span></div></div><div class="calc-box"><h3>٢) إجمالي استهلاك الماء</h3>${breakdown.buildings.map(b=>`<div class="calc-line"><span>${safe(b.name)} من السكان</span><b>${fmt(b.total,3)} كوب</b></div>`).join('')}<div class="calc-line"><span>${safe(ext?.label||'الخارجي')}</span><b>${t.externalWater?fmt(t.externalWater,3)+' كوب':'—'}</b></div><div class="calc-total"><span>الإجمالي المعتمد للسعر</span><span>${fmt(t.waterTotal,3)} كوب</span></div></div></div><div class="money-grid" style="margin-top:13px"><div class="money-card"><small>السعر الخام</small><b>${t.rawPrice?`${fmt(t.rawPrice,3)} ₪`:'—'}</b><small>صافي التكلفة ÷ إجمالي الماء</small></div><div class="money-card"><small>السعر المعتمد</small><b>${t.appliedPrice?waterPriceText(t.appliedPrice)+' ₪':'—'}</b><small>${t.manualPeriodPrice!=null?'تعديل يدوي للفترة':'يتحدث تلقائيًا مع المساهمات'}</small></div><div class="money-card"><small>قراءات السكان</small><b>${eligible} / ${eligible+missing}</b><small>${missing?`باقي ${missing} قراءة`:'كل القراءات مكتملة'}</small></div></div><div class="section-note" style="margin-top:13px"><b>ملاحظة السعر:</b> عند إضافة أو حذف مساهمة يتحدث السعر الحالي للكوب تلقائيًا. السعر اليدوي لساكن معيّن يُحفظ فقط إذا وافقت على التنبيه.<br><br>المعادلة: <b>استهلاك سكان البناية الأولى + استهلاك سكان البناية الثانية + الخارجي = إجمالي استهلاك المياه</b>، ثم <b>صافي تكلفة التشغيل ÷ إجمالي المياه = سعر الكوب الخام</b>، ثم نقربه لأقرب عُشر (منزلة عشرية واحدة).</div>`;
+  return `<div class="calc-banner"><div><h3>نتيجة هذا الأسبوع</h3><p></p></div><div class="price">${t.appliedPrice?money(t.appliedPrice):'لم يُحسب بعد'}</div></div><div class="calc-board"><div class="calc-box"><h3>١) تكلفة الكهرباء والمصاريف</h3><div class="calc-line"><span>الكهرباء من المولدات</span><b>${money(t.energyCost)}</b></div><div class="calc-line"><span>المصاريف والإضافات</span><b>${money(t.extraCost)}</b></div><div class="calc-total"><span>صافي تكلفة التشغيل</span><span>${money(t.netCost)}</span></div></div><div class="calc-box"><h3>٢) إجمالي استهلاك الماء</h3>${breakdown.buildings.map(b=>`<div class="calc-line"><span>${safe(b.name)} من السكان</span><b>${fmt(b.total,3)} كوب</b></div>`).join('')}<div class="calc-line"><span>${safe(ext?.label||'الخارجي')}</span><b>${t.externalWater?fmt(t.externalWater,3)+' كوب':'—'}</b></div><div class="calc-total"><span>الإجمالي المعتمد للسعر</span><span>${fmt(t.waterTotal,3)} كوب</span></div></div></div><div class="money-grid" style="margin-top:13px"><div class="money-card"><small>السعر الخام</small><b>${t.rawPrice?`${fmt(t.rawPrice,3)} ₪`:'—'}</b><small>صافي التكلفة ÷ إجمالي الماء</small></div><div class="money-card"><small>السعر المعتمد</small><b>${t.appliedPrice?money(t.appliedPrice):'—'}</b><small>${t.manualPeriodPrice!=null?'تعديل يدوي للفترة':'يتحدث تلقائيًا مع المساهمات'}</small></div><div class="money-card"><small>قراءات السكان</small><b>${eligible} / ${eligible+missing}</b><small>${missing?`باقي ${missing} قراءة`:'كل القراءات مكتملة'}</small></div></div><div class="section-note" style="margin-top:13px"><b>ملاحظة السعر:</b> عند إضافة أو حذف مساهمة يتحدث السعر الحالي للكوب تلقائيًا. السعر اليدوي لساكن معيّن يُحفظ فقط إذا وافقت على التنبيه.<br><br>المعادلة: <b>استهلاك سكان البناية الأولى + استهلاك سكان البناية الثانية + الخارجي = إجمالي استهلاك المياه</b>، ثم <b>صافي تكلفة التشغيل ÷ إجمالي المياه = سعر الكوب الخام</b>، ثم نرفعه للعدد الصحيح الأعلى.</div>`;
 }
 
-function showPeriodForm(){if(!['admin','manager','accountant'].includes(state.profile?.role)){toast('فتح أسبوع جديد مخصص للإدارة والحسابات','error');return;}openModal(`<h2>فتح أسبوع جديد</h2><p class="modal-lead">السابقة لكل عداد ستنتقل تلقائيًا من آخر قراءة مسجلة، ويمكن تعديلها لاحقًا.</p><div class="form-grid"><div class="field"><label>اسم الأسبوع</label><input id="pLabel" value="أسبوع ${fmtDate(dateNow())}"></div><div class="field"><label>من</label><input id="pStart" type="date" value="${dateNow()}"></div><div class="field"><label>إلى</label><input id="pEnd" type="date" value="${dateNow()}"></div><div class="field"><label>سعر الكوب (اختياري)</label><input id="pPrice" type="number" min="0" step="0.1" placeholder="يُحسب بعد إدخال الكهرباء والماء"></div></div><div class="actions"><button class="btn primary" id="savePeriod">فتح الأسبوع</button><button class="btn ghost" id="cancelPeriod">إلغاء</button></div>`);$('#cancelPeriod').onclick=closeModal;$('#savePeriod').onclick=createPeriod;}
+function showPeriodForm(){if(!['admin','manager','accountant'].includes(state.profile?.role)){toast('فتح أسبوع جديد مخصص للإدارة والحسابات','error');return;}openModal(`<h2>فتح أسبوع جديد</h2><p class="modal-lead">السابقة لكل عداد ستنتقل تلقائيًا من آخر قراءة مسجلة، ويمكن تعديلها لاحقًا.</p><div class="form-grid"><div class="field"><label>اسم الأسبوع</label><input id="pLabel" value="أسبوع ${fmtDate(dateNow())}"></div><div class="field"><label>من</label><input id="pStart" type="date" value="${dateNow()}"></div><div class="field"><label>إلى</label><input id="pEnd" type="date" value="${dateNow()}"></div><div class="field"><label>سعر الكوب (اختياري)</label><input id="pPrice" type="number" min="0" step="0.01" placeholder="يُحسب بعد إدخال الكهرباء والماء"></div></div><div class="actions"><button class="btn primary" id="savePeriod">فتح الأسبوع</button><button class="btn ghost" id="cancelPeriod">إلغاء</button></div>`);$('#cancelPeriod').onclick=closeModal;$('#savePeriod').onclick=createPeriod;}
 async function createPeriod(){
   if(!can('admin','manager','accountant','operator')){toast('لا تملك صلاحية فتح أسبوع','error');return;}const start=$('#pStart').value,end=$('#pEnd').value,label=$('#pLabel').value.trim()||`أسبوع ${fmtDate(start)}`;if(!start||!end){toast('حدد تاريخ بداية ونهاية الأسبوع','error');return;}if(end<start){toast('تاريخ النهاية يجب أن يكون بعد البداية','error');return;}
   if((state.data.periods||[]).some(p=>p.startDate===start&&p.endDate===end)){toast('هذا الأسبوع موجود بالفعل','error');return;}
-  const ref=doc(orgCollection('periods'));const p={label,startDate:start,endDate:end,status:'Draft',isCurrent:true,waterUnitPrice:$('#pPrice').value===''?null:num($('#pPrice').value),createdAt:serverTimestamp(),createdBy:state.user.uid};const batch=writeBatch(db);for(const oldP of (state.data.periods||[])){if(oldP.isCurrent===true)batch.update(orgDoc('periods',oldP.id),{isCurrent:false,updatedAt:serverTimestamp(),updatedBy:state.user.uid});}batch.set(ref,p);
+  const ref=doc(orgCollection('periods'));const p={label,startDate:start,endDate:end,status:'Draft',waterUnitPrice:$('#pPrice').value===''?null:num($('#pPrice').value),createdAt:serverTimestamp(),createdBy:state.user.uid};const batch=writeBatch(db);batch.set(ref,p);
   const residents=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');
   for(const s of residents){const meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,s.id));if(!meter)continue;const history=(state.data.readings||[]).filter(r=>r.meterId===meter.id&&r.currentReading!=null).map(r=>({r,p:periodById(r.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)));const prev=history[0]?.r.currentReading??null;batch.set(doc(orgCollection('readings')),{periodId:ref.id,meterId:meter.id,previousReading:prev,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice,chargeAmount:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
   for(const src of (state.data.sources||[]).filter(x=>x.active!==false)){const history=(state.data.energyReadings||[]).filter(r=>r.sourceId===src.id&&r.currentReading!=null).map(r=>({r,p:periodById(r.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)));const prev=history[0]?.r.currentReading??null;batch.set(doc(orgCollection('energyReadings')),{periodId:ref.id,sourceId:src.id,previousReading:prev,currentReading:null,consumption:null,pricePerKwh:src.defaultRate??null,cost:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}
   const ext=(state.data.waterSummary||[]).filter(x=>x.key==='external'&&x.currentReading!=null&&x.periodId!==ref.id).map(x=>({x,p:periodById(x.periodId)})).filter(x=>x.p).sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.x?.currentReading??null;batch.set(doc(orgCollection('waterSummary')),{periodId:ref.id,key:'external',label:'الخارجي',type:'external',buildingId:null,previousReading:ext,currentReading:null,consumption:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),createdBy:state.user.uid});
-  await batch.commit();await addAudit('إضافة','periods',ref.id,`فتح الأسبوع «${label}» من ${start} إلى ${end}`);state.loaded=false;await loadData(true);state.periodId=ref.id;closeModal();toast('تم فتح الأسبوع وتجهيز القراءات');await navigate('periods',ref.id,true);
+  await batch.commit();state.loaded=false;await loadData(true);state.periodId=ref.id;closeModal();toast('تم فتح الأسبوع وتجهيز القراءات');await navigate('periods',ref.id,true);
 }
 async function renderReadings(){
   setTitle('قراءات الماء','أولًا أدخل قراءات الماء الإجمالية للعمارتين والخارجي، ثم قراءات السكان.');const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();if(p&&(state.data.waterSummary||[]).filter(x=>x.periodId===p.id).length<3){await ensureWaterSummaryForPeriod(p.id);}
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>قراءات الماء</h2></div><div class="panel-actions">${!['viewer','resident'].includes(state.profile?.role)?'<button class="btn soft" id="goCalc">الحساب الكامل</button><button class="btn primary" id="newWeek2">+ أسبوع جديد</button>':''}</div></div>${!p?`<div class="reading-start"><div class="reading-start-icon">◫</div><div><h2>ابدأ من أسبوع جديد</h2><p>بعد فتح الأسبوع ستظهر لك قراءات العمارات والخارجي ثم السكان.</p><button class="btn primary" id="firstWeek2">+ افتح أول أسبوع</button></div></div>`:`<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)} — ${statusText(x.status||'Draft')}</option>`).join('')}</select></div><div class="section-note"><b>المهم:</b> اكتب أولًا القراءة السابقة والحالية لعداد البناية الأولى والثانية والخارجي. البرنامج يحسب استهلاك كل واحد منهم ويجمعهم = <b>إجمالي الاستهلاك الذي سنستخدمه لسعر الكوب.</b></div>${waterSummaryTable(p.id)}<div class="section-note"><b>ثم السكان:</b> لكل ساكن اكتب السابقة والحالية. (الحالية − السابقة) ÷ 1000 = استهلاكه بالكوب/م³.</div>${readingTable(p.id)}`}</section>`;
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>قراءات الماء</h2></div><div class="panel-actions"><button class="btn soft" id="goCalc">الحساب الكامل</button><button class="btn primary" id="newWeek2">+ أسبوع جديد</button></div></div>${!p?`<div class="reading-start"><div class="reading-start-icon">◫</div><div><h2>ابدأ من أسبوع جديد</h2><p>بعد فتح الأسبوع ستظهر لك قراءات العمارات والخارجي ثم السكان.</p><button class="btn primary" id="firstWeek2">+ افتح أول أسبوع</button></div></div>`:`<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)} — ${statusText(x.status||'Draft')}</option>`).join('')}</select></div><div class="section-note"><b>المهم:</b> اكتب أولًا القراءة السابقة والحالية لعداد البناية الأولى والثانية والخارجي. البرنامج يحسب استهلاك كل واحد منهم ويجمعهم = <b>إجمالي الاستهلاك الذي سنستخدمه لسعر الكوب.</b></div>${waterSummaryTable(p.id)}<div class="section-note"><b>ثم السكان:</b> لكل ساكن اكتب السابقة والحالية. (الحالية − السابقة) ÷ 1000 = استهلاكه بالكوب/م³.</div>${readingTable(p.id)}`}</section>`;
   $('#newWeek2').onclick=showPeriodForm;$('#goCalc').onclick=()=>p?navigate('periods',p.id):showPeriodForm;if($('#firstWeek2'))$('#firstWeek2').onclick=showPeriodForm;$('#periodSelect')?.addEventListener('change',e=>navigate('readings',e.target.value));if(p){bindWaterSummaryInputs(p.id);bindReadingInputs(p.id);} 
 }
 function waterSummaryTable(pid){
@@ -926,7 +578,7 @@ function waterSummaryTable(pid){
   return `<div class="water-master"><div class="water-master-head"><div><h3>١) إجمالي استهلاك المياه</h3><p>البناية الأولى والثانية تُحسبان تلقائيًا من مجموع السكان. الخارجي فقط تدخله هنا.</p></div><div class="water-master-total" id="waterMasterTotal">${fmt(waterSummaryTotal(pid),3)} كوب</div></div><div class="table-wrap"><table class="table master-water-table"><thead><tr><th>الجهة</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>الاستهلاك</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>${allRows.map(r=>{
     const isExt=r.kind==='external';
     return `<tr ${isExt&&r.id?`data-wsid="${r.id}"`:''}><td><b>${safe(r.name||r.label)}</b><small>${isExt?'استهلاك خارجي':'مجموع استهلاك السكان'}</small></td><td>${isExt?`<input class="reading-input ws-prev" type="number" step="0.001" value="${r.previousReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td>${isExt?`<input class="reading-input ws-current" type="number" step="0.001" value="${r.currentReading??''}">`:'<span class="auto-reading">من السكان</span>'}</td><td class="ws-cons">${r.total==null?'—':fmt(r.total,3)+' كوب'}</td><td>${isExt?'<span class="badge info">يدوي</span>':'<span class="badge ok">تلقائي</span>'}</td><td class="ws-status">${r.total==null?'<span class="badge warn">بانتظار</span>':'<span class="badge ok">جاهزة</span>'}</td><td>${!isExt&&can('admin','manager','accountant')?`<button class="mini red" data-water-delete-building="${r.id}" title="حذف البناية">حذف</button>`:''}</td></tr>`;
-  }).join('')}</tbody></table></div><div class="master-water-footer"><span>سعر الكوب يعتمد على إجمالي السكان في البنايتين + الخارجي. زر حذف البناية يظهر هنا أيضًا حتى لو لم يكن عليها استهلاك ماء.</span><span class="autosave-note">الحفظ التلقائي مفعّل</span>${can('admin','manager','accountant','operator')?'<button class="btn soft" id="saveWaterSummary">حفظ الآن</button><button class="btn ghost" id="deleteExternalReading">حذف قراءة الخارجي</button>':''}</div></div>`;
+  }).join('')}</tbody></table></div><div class="master-water-footer"><span>سعر الكوب يعتمد على إجمالي السكان في البنايتين + الخارجي. زر حذف البناية يظهر هنا أيضًا حتى لو لم يكن عليها استهلاك ماء.</span><span class="autosave-note">الحفظ التلقائي مفعّل</span><button class="btn soft" id="saveWaterSummary">حفظ الآن</button><button class="btn ghost" id="deleteExternalReading">حذف قراءة الخارجي</button></div></div>`;
 }
 let __autoSaveTimers={};
 function queueAutoSave(key,fn){
@@ -942,9 +594,9 @@ function bindWaterSummaryInputs(pid){
     tr.querySelector('.ws-cons').textContent=cons==null?'—':fmt(cons,3)+' كوب';
     tr.querySelector('.ws-status').innerHTML=cur===''?'<span class="badge warn">بانتظار</span>':(num(cur)<num(prev)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهزة</span>');
     const id=tr.dataset.wsid;
-    if(id && isCurrentPeriodId(pid)) queueAutoSave('ws-'+id,async()=>{
+    if(id) queueAutoSave('ws-'+id,async()=>{
       if(num(cur)<num(prev))throw new Error('invalid');
-      await updateDoc(orgDoc('waterSummary',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption:cons,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid},{audit:false});
+      await updateDoc(orgDoc('waterSummary',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption:cons,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});
     });
     const total=$$('[data-wsid]').reduce((acc,row)=>{const p=row.querySelector('.ws-prev')?.value,c=row.querySelector('.ws-current')?.value;return acc+(p!==''&&c!==''?Math.max(0,num(c)-num(p))/1000:0)},0)+buildingWaterBreakdown(pid).buildings.reduce((acc,b)=>acc+b.total,0);
     $('#waterMasterTotal').textContent=`${fmt(total,3)} كوب`;
@@ -957,21 +609,14 @@ function bindWaterSummaryInputs(pid){
     const prev=tr.querySelector('.ws-prev').value,cur=tr.querySelector('.ws-current').value;
     if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('القراءة الحالية أقل من السابقة.','error');return;}
     const cons=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;
-    const row=(state.data.waterSummary||[]).find(x=>x.id===tr.dataset.wsid);
-    const data={previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption:cons,status:cur===''?'Pending':'Entered'};
-    if(['accountant','operator'].includes(state.profile?.role) && !isCurrentPeriodId(pid)){
-      if(row && describeChanges(row,data)!=='تعديل بيانات السجل') await createApprovalBatch([{collection:'waterSummary',docId:tr.dataset.wsid,payload:data,oldData:row}],`تعديل قراءة المياه الخارجية للأسبوع ${periodById(pid)?.label||''}`,`طلب واحد لتعديل القراءة السابقة.`);
-      else toast('لا توجد تغييرات على القراءة السابقة.');
-      renderReadings();return;
-    }
-    await updateDoc(orgDoc('waterSummary',tr.dataset.wsid),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+    await updateDoc(orgDoc('waterSummary',tr.dataset.wsid),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption:cons,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});
     state.loaded=false;await loadData(true);toast('تم حفظ قراءة الخارجي');renderReadings();
   };
 }
 
 function readingTable(pid){
   const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>x.id===r.meterId);const s=subscriberByMeter(m);return{s,r,m}}).filter(x=>x.s&&x.s.active!==false).sort((a,b)=>String(a.s.code).localeCompare(String(b.s.code),undefined,{numeric:true}));const p=periodById(pid); const t=currentTotals(pid); const weekPrice=t.appliedPrice;
-  return `<div class="table-wrap"><table class="table" style="min-width:1060px"><thead><tr><th>الكود</th><th>الساكن</th><th>البناية / النوع</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>السحب</th><th>سعر الكوب</th><th>القيمة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(x=>{const {s,r}=x;const cons=r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:null;const price=readingManualPrice(r)??weekPrice??'';const charge=cons!=null&&price!==''?waterChargeAmount(cons,price):null;return `<tr data-rid="${r.id}"><td><span class="code">${safe(s.code)}</span></td><td><b>${safe(s.name)}</b></td><td>${s.type==='خارجي'?'<span class="badge warn">خارجي</span>':safe(subscriberRow(s).buildingName)}</td><td><input class="reading-input prev" type="number" step="0.001" value="${r.previousReading??''}"></td><td><input class="reading-input current" type="number" step="0.001" value="${r.currentReading??''}"></td><td class="cons">${cons==null?'—':fmt(cons,3)}</td><td><input class="reading-input price" data-manual="${readingManualPrice(r)!=null?'1':'0'}" type="number" step="0.1" value="${waterPriceText(price).replace(/[^0-9.-]/g,'')}"></td><td class="charge">${charge==null?'—':money(charge)}</td><td class="status">${r.currentReading==null?'<span class="badge warn">بانتظار</span>':((num(r.currentReading)<num(r.previousReading))?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهزة</span>')}</td><td>${can('admin','manager','accountant')?`<button class="mini red" data-delete-reading="${r.id}">حذف</button>`:''}</td></tr>`}).join(''):`<tr><td colspan="10">${empty('لا توجد قراءات','تأكد من وجود سكان وعدادات قبل فتح الأسبوع.')}</td></tr>`}</tbody></table></div><div class="readings-actions"><span class="muted">${['viewer'].includes(state.profile?.role)?'وضع المشاهدة — لا يمكن تعديل القراءات.':''}</span>${can('admin','manager','accountant','operator')?'<button class="btn primary" id="saveReadings">حفظ كل القراءات</button>':''}</div>`;
+  return `<div class="table-wrap"><table class="table" style="min-width:1060px"><thead><tr><th>الكود</th><th>الساكن</th><th>البناية / النوع</th><th>القراءة السابقة</th><th>القراءة الحالية</th><th>السحب</th><th>سعر الكوب</th><th>القيمة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${rows.length?rows.map(x=>{const {s,r}=x;const cons=r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:null;const price=readingManualPrice(r)??weekPrice??p.waterUnitPrice??'';const charge=cons!=null&&price!==''?cons*num(price):null;return `<tr data-rid="${r.id}"><td><span class="code">${safe(s.code)}</span></td><td><b>${safe(s.name)}</b></td><td>${s.type==='خارجي'?'<span class="badge warn">خارجي</span>':safe(subscriberRow(s).buildingName)}</td><td><input class="reading-input prev" type="number" step="0.001" value="${r.previousReading??''}"></td><td><input class="reading-input current" type="number" step="0.001" value="${r.currentReading??''}"></td><td class="cons">${cons==null?'—':fmt(cons,3)}</td><td><input class="reading-input price" data-manual="${readingManualPrice(r)!=null?'1':'0'}" type="number" step="0.01" value="${price}"></td><td class="charge">${charge==null?'—':money(charge)}</td><td class="status">${r.currentReading==null?'<span class="badge warn">بانتظار</span>':((num(r.currentReading)<num(r.previousReading))?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهزة</span>')}</td><td>${can('admin','manager','accountant')?`<button class="mini red" data-delete-reading="${r.id}">حذف</button>`:''}</td></tr>`}).join(''):`<tr><td colspan="10">${empty('لا توجد قراءات','تأكد من وجود سكان وعدادات قبل فتح الأسبوع.')}</td></tr>`}</tbody></table></div><div class="readings-actions"><span class="muted"></span><button class="btn primary" id="saveReadings">حفظ كل القراءات</button></div>`;
 }
 function bindReadingInputs(pid){
   const weekPrice=currentTotals(pid).appliedPrice;
@@ -984,16 +629,14 @@ function bindReadingInputs(pid){
     tr.querySelector('.charge').textContent=cons!=null?money(cons*price):'—';
     tr.querySelector('.status').innerHTML=cur===''?'<span class="badge warn">بانتظار</span>':(num(cur)<num(prev)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهزة</span>');
     const id=tr.dataset.rid;
-    if(isCurrentPeriodId(pid)){
-      queueAutoSave('reading-'+id,async()=>{
-        if(cur!==''&&prev!==''&&num(cur)<num(prev))throw new Error('invalid');
-        const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;
-        await updateDoc(orgDoc('readings',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,chargeAmount:consumption!=null?waterChargeAmount(consumption,price):null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid},{audit:false});
-      });
-    }
+    queueAutoSave('reading-'+id,async()=>{
+      if(cur!==''&&prev!==''&&num(cur)<num(prev))throw new Error('invalid');
+      const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;
+      await updateDoc(orgDoc('readings',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,chargeAmount:consumption!=null?consumption*price:null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+    });
   }));
   $$('[data-rid] .price').forEach(inp=>inp.addEventListener('change',async()=>{
-    const tr=inp.closest('tr'); const next=inp.value===''?null:waterPrice(inp.value); const row=(state.data.readings||[]).find(x=>x.id===tr.dataset.rid); if(!row)return;
+    const tr=inp.closest('tr'); const next=inp.value===''?null:num(inp.value); const row=(state.data.readings||[]).find(x=>x.id===tr.dataset.rid); if(!row)return;
     const auto=currentTotals(pid).appliedPrice;
     if(next!=null && Math.abs(next-auto)>0.0001){
       const keep=confirm(`السعر الذي أدخلته (${money(next)}) مختلف عن السعر الحالي للكوب (${money(auto)}).\n\nاضغط "موافق" لإبقاء السعر الجديد يدويًا، أو "إلغاء" لإرجاع السعر الأصلي.`);
@@ -1003,52 +646,31 @@ function bindReadingInputs(pid){
     const prev=tr.querySelector('.prev').value,cur=tr.querySelector('.current').value,price=inp.value===''?null:num(inp.value);
     if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('القراءة الحالية أقل من السابقة.','error');return;}
     const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;
-    if(isCurrentPeriodId(pid)){
-      await updateDoc(orgDoc('readings',tr.dataset.rid),{unitPrice:price,manualUnitPrice:(inp.dataset.manual==='1'?price:null),manualPrice:inp.dataset.manual==='1',chargeAmount:consumption!=null&&price!=null?waterChargeAmount(consumption,price):null,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
-      state.loaded=false;await loadData(true);renderReadings();
-    } else {
-      inp.dataset.pendingHistorical='1';
-      toast('هذه قراءة من أسبوع سابق. عدّلها ثم اضغط «حفظ كل القراءات» لإرسال طلب الموافقة.');
-    }
+    await updateDoc(orgDoc('readings',tr.dataset.rid),{unitPrice:price,manualUnitPrice:(inp.dataset.manual==='1'?price:null),manualPrice:inp.dataset.manual==='1',chargeAmount:consumption!=null&&price!=null?consumption*price:null,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
+    state.loaded=false;await loadData(true);renderReadings();
   }));
   $('#saveReadings').onclick=async()=>{
     if(!can('admin','manager','accountant','operator')){toast('لا تملك صلاحية التعديل','error');return;}
     const rows=$$('[data-rid]');
-    if(['accountant','operator'].includes(state.profile?.role) && !isCurrentPeriodId(pid)){
-      const approvalItems=[];
-      for(const tr of rows){
-        const prev=tr.querySelector('.prev').value,cur=tr.querySelector('.current').value,priceInput=tr.querySelector('.price');
-        if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('هناك قراءة حالية أقل من السابقة.','error');return;}
-        const manual=priceInput.dataset.manual==='1'?num(priceInput.value):null;
-        const price=manual!=null?manual:weekPrice;
-        const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;
-        const row=(state.data.readings||[]).find(x=>x.id===tr.dataset.rid);
-        if(!row) continue;
-        const data={previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,manualUnitPrice:manual,manualPrice:manual!=null,chargeAmount:consumption!=null?waterChargeAmount(consumption,price):null,status:cur===''?'Pending':'Entered'};
-        if(describeChanges(row,data)!=='تعديل بيانات السجل') approvalItems.push({collection:'readings',docId:tr.dataset.rid,payload:data,oldData:row});
-      }
-      if(approvalItems.length) await createApprovalBatch(approvalItems,`تعديل قراءات المياه للأسبوع ${periodById(pid)?.label||''}`,`طلب واحد يشمل تعديلات القراءات السابقة فقط.`);
-      else toast('لا توجد تغييرات على القراءات السابقة.');
-      renderReadings();return;
-    }
-    const ops=[];for(const tr of rows){const prev=tr.querySelector('.prev').value,cur=tr.querySelector('.current').value,priceInput=tr.querySelector('.price');if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('هناك قراءة حالية أقل من السابقة.','error');return;}const manual=priceInput.dataset.manual==='1'?num(priceInput.value):null;const price=manual!=null?manual:weekPrice;const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;ops.push(b=>b.update(orgDoc('readings',tr.dataset.rid),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,manualUnitPrice:manual,manualPrice:manual!=null,chargeAmount:consumption!=null?waterChargeAmount(consumption,price):null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid}));}
-    await commitOps(ops);await addAudit('تعديل','readings',pid,`تم إدخال/تعديل قراءات المياه للأسبوع ${periodById(pid)?.label||''}`);state.loaded=false;await loadData(true);toast('تم حفظ كل القراءات');renderReadings();
+    if(state.profile?.role==='accountant'){let requested=0;for(const tr of rows){const prev=tr.querySelector('.prev').value,cur=tr.querySelector('.current').value,priceInput=tr.querySelector('.price');if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('هناك قراءة حالية أقل من السابقة.','error');return;}const manual=priceInput.dataset.manual==='1'?num(priceInput.value):null;const price=manual!=null?manual:weekPrice;const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;const row=(state.data.readings||[]).find(x=>x.id===tr.dataset.rid);const data={previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,manualUnitPrice:manual,manualPrice:manual!=null,chargeAmount:consumption!=null?consumption*price:null,status:cur===''?'Pending':'Entered'};if(row&&!sameId(row.createdBy,state.user.uid)&&!accountantCanFillBlankMeasurement('readings',row,data)){await createApprovalRequest('update',orgDoc('readings',tr.dataset.rid),data,row);requested++;}else{await updateDoc(orgDoc('readings',tr.dataset.rid),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});}}state.loaded=false;await loadData(true);toast(requested?`تم إرسال ${requested} قراءة سابقة للموافقة`:'تم حفظ كل القراءات');renderReadings();return;}
+    const ops=[];for(const tr of rows){const prev=tr.querySelector('.prev').value,cur=tr.querySelector('.current').value,priceInput=tr.querySelector('.price');if(cur!==''&&prev!==''&&num(cur)<num(prev)){toast('هناك قراءة حالية أقل من السابقة.','error');return;}const manual=priceInput.dataset.manual==='1'?num(priceInput.value):null;const price=manual!=null?manual:weekPrice;const consumption=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev))/1000:null;ops.push(b=>b.update(orgDoc('readings',tr.dataset.rid),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),consumption,unitPrice:price,manualUnitPrice:manual,manualPrice:manual!=null,chargeAmount:consumption!=null?consumption*price:null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid}));}
+    await commitOps(ops);state.loaded=false;await loadData(true);toast('تم حفظ كل القراءات');renderReadings();
   };
   $$('[data-delete-reading]').forEach(b=>b.onclick=()=>deleteReading(b.dataset.deleteReading));
 }
 
 function renderEnergy(){
   setTitle('الكهرباء والمولدات','أبو زايد والسويسي هما المصدران الأساسيان. المولد الخارجي يسجل كمصروف في صفحة المصاريف.');const periods=latestPeriods();if(!state.periodId)state.periodId=periods[0]?.id;const p=selectedPeriod();const sources=state.data.sources||[];const ers=p?energyForPeriod(p.id):[];
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>كهرباء المولدات</h2></div><div class="panel-actions">${can('admin','manager','accountant')?'<button class="btn soft" id="sourceManage">+ إضافة مصدر/مولد</button>':''}${can('admin','manager','accountant','operator')?'<button class="btn primary" id="energySave">حفظ القراءات</button>':''}</div></div>${!p?`<div class="reading-start"><div class="reading-start-icon">ϟ</div><div><h2>افتح أسبوعًا أولًا</h2><p>بعد فتحه ستظهر أبو زايد والسويسي.</p><button class="btn primary" id="energyFirst">+ افتح أسبوعًا</button></div></div>`:`<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)} — ${statusText(x.status||'Draft')}</option>`).join('')}</select></div><div class="section-note"><b>المعادلة:</b> (الحالية − السابقة) × سعر الكيلو = تكلفة المصدر. لا يوجد مولد خارجي هنا؛ سجله كمصروف عندما تحتاجه.</div><div class="table-wrap"><table class="table" style="min-width:1050px"><thead><tr><th>المصدر</th><th>السابقة</th><th>الحالية</th><th>الاستهلاك</th><th>سعر الكيلو</th><th>التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${ers.length?ers.map(r=>{const src=sources.find(s=>s.id===r.sourceId);const cons=r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null;const cost=cons!=null&&r.pricePerKwh!=null?cons*num(r.pricePerKwh):null;return `<tr data-eid="${r.id}"><td><b>${safe(src?.name||'مصدر محذوف')}</b></td><td><input class="reading-input eprev" type="number" step="0.001" value="${r.previousReading??''}"></td><td><input class="reading-input ecur" type="number" step="0.001" value="${r.currentReading??''}"></td><td class="econs">${cons==null?'—':fmt(cons,3)}</td><td><input class="reading-input erate" type="number" step="0.01" value="${r.pricePerKwh??''}"></td><td class="ecost">${cost==null?'—':money(cost)}</td><td class="estatus">${r.currentReading==null?'<span class="badge warn">بانتظار</span>':(num(r.currentReading)<num(r.previousReading)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهز</span>')}</td><td>${can('admin','manager','accountant')?`<button class="mini red" data-delete-energy="${r.id}">حذف</button>`:''}</td></tr>`}).join(''):`<tr><td colspan="8">${empty('لا توجد مصادر طاقة','أضف أبو زايد أو السويسي.')}</td></tr>`}</tbody></table></div><div class="panel" style="margin-top:13px;background:#fbfcfb"><div class="panel-head"><div><h2>مصادر الطاقة</h2></div></div><div class="members">${sources.map(src=>`<div class="member-row"><div class="avatar">ϟ</div><div class="member-info"><b>${safe(src.name)}</b><span>${safe(src.type||'مولد')} • ${src.defaultRate!=null?`السعر الافتراضي ${money(src.defaultRate)}`:'بدون سعر افتراضي'}</span></div><span class="badge ${src.active!==false?'ok':'warn'}">${src.active!==false?'فعال':'موقوف'}</span>${can('admin','manager','accountant')?`<button class="mini" data-edit-source="${src.id}">تعديل</button><button class="mini red" data-delete-source="${src.id}">حذف</button>`:''}</div>`).join('')}</div></div>`}</section>`;
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>كهرباء المولدات</h2></div><div class="panel-actions">${can('admin','manager','accountant')?'<button class="btn soft" id="sourceManage">+ إضافة مصدر/مولد</button>':''}<button class="btn primary" id="energySave">حفظ القراءات</button></div></div>${!p?`<div class="reading-start"><div class="reading-start-icon">ϟ</div><div><h2>افتح أسبوعًا أولًا</h2><p>بعد فتحه ستظهر أبو زايد والسويسي.</p><button class="btn primary" id="energyFirst">+ افتح أسبوعًا</button></div></div>`:`<div class="period-picker"><label>الأسبوع الحالي</label><select id="periodSelect" class="period-select">${periods.map(x=>`<option value="${x.id}" ${x.id===p.id?'selected':''}>${safe(x.label||'أسبوع')} — ${fmtDate(x.startDate)} إلى ${fmtDate(x.endDate)} — ${statusText(x.status||'Draft')}</option>`).join('')}</select></div><div class="section-note"><b>المعادلة:</b> (الحالية − السابقة) × سعر الكيلو = تكلفة المصدر. لا يوجد مولد خارجي هنا؛ سجله كمصروف عندما تحتاجه.</div><div class="table-wrap"><table class="table" style="min-width:1050px"><thead><tr><th>المصدر</th><th>السابقة</th><th>الحالية</th><th>الاستهلاك</th><th>سعر الكيلو</th><th>التكلفة</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>${ers.length?ers.map(r=>{const src=sources.find(s=>s.id===r.sourceId);const cons=r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null;const cost=cons!=null&&r.pricePerKwh!=null?cons*num(r.pricePerKwh):null;return `<tr data-eid="${r.id}"><td><b>${safe(src?.name||'مصدر محذوف')}</b></td><td><input class="reading-input eprev" type="number" step="0.001" value="${r.previousReading??''}"></td><td><input class="reading-input ecur" type="number" step="0.001" value="${r.currentReading??''}"></td><td class="econs">${cons==null?'—':fmt(cons,3)}</td><td><input class="reading-input erate" type="number" step="0.01" value="${r.pricePerKwh??''}"></td><td class="ecost">${cost==null?'—':money(cost)}</td><td class="estatus">${r.currentReading==null?'<span class="badge warn">بانتظار</span>':(num(r.currentReading)<num(r.previousReading)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهز</span>')}</td><td>${can('admin','manager','accountant')?`<button class="mini red" data-delete-energy="${r.id}">حذف</button>`:''}</td></tr>`}).join(''):`<tr><td colspan="8">${empty('لا توجد مصادر طاقة','أضف أبو زايد أو السويسي.')}</td></tr>`}</tbody></table></div><div class="panel" style="margin-top:13px;background:#fbfcfb"><div class="panel-head"><div><h2>مصادر الطاقة</h2></div></div><div class="members">${sources.map(src=>`<div class="member-row"><div class="avatar">ϟ</div><div class="member-info"><b>${safe(src.name)}</b><span>${safe(src.type||'مولد')} • ${src.defaultRate!=null?`السعر الافتراضي ${money(src.defaultRate)}`:'بدون سعر افتراضي'}</span></div><span class="badge ${src.active!==false?'ok':'warn'}">${src.active!==false?'فعال':'موقوف'}</span>${can('admin','manager','accountant')?`<button class="mini" data-edit-source="${src.id}">تعديل</button><button class="mini red" data-delete-source="${src.id}">حذف</button>`:''}</div>`).join('')}</div></div>`}</section>`;
   $('#sourceManage')?.addEventListener('click',()=>showSourceForm());$$('[data-edit-source]').forEach(b=>b.onclick=()=>showSourceForm(b.dataset.editSource));$$('[data-delete-source]').forEach(b=>b.onclick=()=>deleteSource(b.dataset.deleteSource));$('#energySave').onclick=()=>p?saveEnergy(p.id):null;if($('#energyFirst'))$('#energyFirst').onclick=showPeriodForm;$('#periodSelect')?.addEventListener('change',e=>navigate('energy',e.target.value));bindEnergyInputs();
 }
 function bindEnergyInputs(){
-  $$('[data-eid] .eprev,[data-eid] .ecur,[data-eid] .erate').forEach(inp=>inp.addEventListener('input',()=>{const tr=inp.closest('tr'),prev=tr.querySelector('.eprev').value,cur=tr.querySelector('.ecur').value,rate=tr.querySelector('.erate').value;const cons=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;tr.querySelector('.econs').textContent=cons==null?'—':fmt(cons,3);tr.querySelector('.ecost').textContent=cons!=null&&rate!==''?money(cons*num(rate)):'—';tr.querySelector('.estatus').innerHTML=cur===''?'<span class="badge warn">بانتظار</span>':(num(cur)<num(prev)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهز</span>');const id=tr.dataset.eid;if(isCurrentPeriodId(state.periodId)){queueAutoSave('energy-'+id,async()=>{if(cur!==''&&prev!==''&&num(cur)<num(prev))throw new Error('invalid');const c=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;await updateDoc(orgDoc('energyReadings',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),pricePerKwh:rate===''?null:num(rate),consumption:c,cost:c!=null&&rate!==''?c*num(rate):null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid},{audit:false});});}}));
+  $$('[data-eid] .eprev,[data-eid] .ecur,[data-eid] .erate').forEach(inp=>inp.addEventListener('input',()=>{const tr=inp.closest('tr'),prev=tr.querySelector('.eprev').value,cur=tr.querySelector('.ecur').value,rate=tr.querySelector('.erate').value;const cons=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;tr.querySelector('.econs').textContent=cons==null?'—':fmt(cons,3);tr.querySelector('.ecost').textContent=cons!=null&&rate!==''?money(cons*num(rate)):'—';tr.querySelector('.estatus').innerHTML=cur===''?'<span class="badge warn">بانتظار</span>':(num(cur)<num(prev)?'<span class="badge danger">تحقق</span>':'<span class="badge ok">جاهز</span>');const id=tr.dataset.eid;queueAutoSave('energy-'+id,async()=>{if(cur!==''&&prev!==''&&num(cur)<num(prev))throw new Error('invalid');const c=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;await updateDoc(orgDoc('energyReadings',id),{previousReading:prev===''?null:num(prev),currentReading:cur===''?null:num(cur),pricePerKwh:rate===''?null:num(rate),consumption:c,cost:c!=null&&rate!==''?c*num(rate):null,status:cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});});}));
   $$('[data-delete-energy]').forEach(b=>b.onclick=()=>deleteEnergyReading(b.dataset.deleteEnergy));
 }
 
-async function saveEnergy(pid){if(!can('admin','manager','accountant','operator')){toast('لا تملك صلاحية التعديل','error');return;}const rows=$$('[data-eid]').map(tr=>{const prev=tr.querySelector('.eprev').value,cur=tr.querySelector('.ecur').value,rate=tr.querySelector('.erate').value;const cons=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;return {tr,id:tr.dataset.eid,prev,cur,rate,cons,row:(state.data.energyReadings||[]).find(x=>x.id===tr.dataset.eid)};});for(const x of rows){if(x.cur!==''&&x.prev!==''&&num(x.cur)<num(x.prev)){toast('هناك قراءة كهرباء أقل من السابقة. أصلحها أولًا.','error');return;}}if(['accountant','operator'].includes(state.profile?.role) && !isCurrentPeriodId(pid)){const approvalItems=[];for(const x of rows){const d={previousReading:x.prev===''?null:num(x.prev),currentReading:x.cur===''?null:num(x.cur),pricePerKwh:x.rate===''?null:num(x.rate),consumption:x.cons,cost:x.cons!=null&&x.rate!==''?x.cons*num(x.rate):null,status:x.cur===''?'Pending':'Entered'};if(x.row && describeChanges(x.row,d)!=='تعديل بيانات السجل')approvalItems.push({collection:'energyReadings',docId:x.id,payload:d,oldData:x.row});}if(approvalItems.length){await createApprovalBatch(approvalItems,`تعديل قراءات الكهرباء للأسبوع ${periodById(pid)?.label||''}`,`طلب واحد يشمل تعديلات القراءات السابقة فقط.`);toast('تم إرسال طلب واحد لمدير النظام لتعديل القراءات السابقة.');}else toast('لا توجد تغييرات على القراءات السابقة.');renderEnergy();return;}else{const batch=writeBatch(db);for(const x of rows){batch.update(orgDoc('energyReadings',x.id),{previousReading:x.prev===''?null:num(x.prev),currentReading:x.cur===''?null:num(x.cur),pricePerKwh:x.rate===''?null:num(x.rate),consumption:x.cons,cost:x.cons!=null&&x.rate!==''?x.cons*num(x.rate):null,status:x.cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});}await batch.commit();await addAudit('تعديل','energyReadings',pid,`تم إدخال/تعديل قراءات الكهرباء للأسبوع ${periodById(pid)?.label||''}`);}state.loaded=false;await loadData(true);toast('تم حفظ قراءات الكهرباء');renderEnergy();}
-function showSourceForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة مصادر الطاقة','error');return;}const src=id?(state.data.sources||[]).find(x=>x.id===id):null;openModal(`<h2>${src?'تعديل المصدر':'إضافة مصدر / مولد'}</h2><p class="modal-lead">لا تربط النظام بعدد ثابت من المولدات؛ أضف أي مصدر مستقبلي.</p><div class="form-grid"><div class="field"><label>اسم المصدر</label><input id="sName" value="${safe(src?.name||'')}"></div><div class="field"><label>النوع</label><input id="sType" value="${safe(src?.type||'مولد')}"></div><div class="field"><label>سعر كيلو افتراضي</label><input id="sRate" type="number" step="0.01" value="${src?.defaultRate??''}"></div><div class="field"><label>الحالة</label><select id="sActive"><option value="1" ${src?.active!==false?'selected':''}>فعال</option><option value="0" ${src?.active===false?'selected':''}>موقوف</option></select></div></div><div class="actions"><button class="btn primary" id="saveSource">حفظ</button><button class="btn ghost" id="closeSource">إلغاء</button></div>`);$('#closeSource').onclick=closeModal;$('#saveSource').onclick=async()=>{const name=$('#sName').value.trim();if(!name){toast('اكتب اسم المصدر','error');return;}const data={name,type:$('#sType').value.trim()||'مولد',defaultRate:$('#sRate').value===''?null:num($('#sRate').value),active:$('#sActive').value==='1'};if(src){await updateDoc(orgDoc('sources',id),{...data,updatedAt:serverTimestamp()});upsertLocal('sources',{id,...data});await addAudit('تعديل','sources',id,`تعديل مصدر الطاقة «${name}»`);toast('تم تعديل المصدر');}else{const r=doc(orgCollection('sources'));await fsSetDoc(r,{...data,code:name.toLowerCase().replace(/\s+/g,'-'),createdAt:serverTimestamp()});upsertLocal('sources',{id:r.id,...data});const p=selectedPeriod();if(p){const er=doc(orgCollection('energyReadings'));await fsSetDoc(er,{periodId:p.id,sourceId:r.id,previousReading:null,currentReading:null,pricePerKwh:data.defaultRate,consumption:null,cost:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}await addAudit('إضافة','sources',r.id,`إضافة مصدر الطاقة «${name}»`);toast('تمت إضافة المصدر');}closeModal();state.loaded=false;await loadData(true);renderEnergy();};}
+async function saveEnergy(pid){if(!can('admin','manager','accountant','operator')){toast('لا تملك صلاحية التعديل','error');return;}const rows=$$('[data-eid]').map(tr=>{const prev=tr.querySelector('.eprev').value,cur=tr.querySelector('.ecur').value,rate=tr.querySelector('.erate').value;const cons=cur!==''&&prev!==''?Math.max(0,num(cur)-num(prev)):null;return {tr,id:tr.dataset.eid,prev,cur,rate,cons,row:(state.data.energyReadings||[]).find(x=>x.id===tr.dataset.eid)};});for(const x of rows){if(x.cur!==''&&x.prev!==''&&num(x.cur)<num(x.prev)){toast('هناك قراءة كهرباء أقل من السابقة. أصلحها أولًا.','error');return;}}if(state.profile?.role==='accountant'){let requested=0;for(const x of rows){const d={previousReading:x.prev===''?null:num(x.prev),currentReading:x.cur===''?null:num(x.cur),pricePerKwh:x.rate===''?null:num(x.rate),consumption:x.cons,cost:x.cons!=null&&x.rate!==''?x.cons*num(x.rate):null,status:x.cur===''?'Pending':'Entered'};if(x.row && !sameId(x.row.createdBy,state.user.uid) && !accountantCanFillBlankMeasurement('energyReadings',x.row,d)){await createApprovalRequest('update',orgDoc('energyReadings',x.id),d,x.row);requested++;}else{await updateDoc(orgDoc('energyReadings',x.id),{...d,updatedAt:serverTimestamp(),updatedBy:state.user.uid});}}if(requested){state.loaded=false;await loadData(true);toast(`تم إرسال ${requested} تعديل/تعديلات سابقة للموافقة`);renderEnergy();return;}}else{const batch=writeBatch(db);for(const x of rows){batch.update(orgDoc('energyReadings',x.id),{previousReading:x.prev===''?null:num(x.prev),currentReading:x.cur===''?null:num(x.cur),pricePerKwh:x.rate===''?null:num(x.rate),consumption:x.cons,cost:x.cons!=null&&x.rate!==''?x.cons*num(x.rate):null,status:x.cur===''?'Pending':'Entered',updatedAt:serverTimestamp(),updatedBy:state.user.uid});}await batch.commit();await addAudit('تعديل','energyReadings',pid,`حفظ قراءات الكهرباء للأسبوع`);}state.loaded=false;await loadData(true);toast('تم حفظ قراءات الكهرباء');renderEnergy();}
+function showSourceForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة مصادر الطاقة','error');return;}const src=id?(state.data.sources||[]).find(x=>x.id===id):null;openModal(`<h2>${src?'تعديل المصدر':'إضافة مصدر / مولد'}</h2><p class="modal-lead">لا تربط النظام بعدد ثابت من المولدات؛ أضف أي مصدر مستقبلي.</p><div class="form-grid"><div class="field"><label>اسم المصدر</label><input id="sName" value="${safe(src?.name||'')}"></div><div class="field"><label>النوع</label><input id="sType" value="${safe(src?.type||'مولد')}"></div><div class="field"><label>سعر كيلو افتراضي</label><input id="sRate" type="number" step="0.01" value="${src?.defaultRate??''}"></div><div class="field"><label>الحالة</label><select id="sActive"><option value="1" ${src?.active!==false?'selected':''}>فعال</option><option value="0" ${src?.active===false?'selected':''}>موقوف</option></select></div></div><div class="actions"><button class="btn primary" id="saveSource">حفظ</button><button class="btn ghost" id="closeSource">إلغاء</button></div>`);$('#closeSource').onclick=closeModal;$('#saveSource').onclick=async()=>{const name=$('#sName').value.trim();if(!name){toast('اكتب اسم المصدر','error');return;}const data={name,type:$('#sType').value.trim()||'مولد',defaultRate:$('#sRate').value===''?null:num($('#sRate').value),active:$('#sActive').value==='1'};if(src){await updateDoc(orgDoc('sources',id),{...data,updatedAt:serverTimestamp()});upsertLocal('sources',{id,...data});toast('تم تعديل المصدر');}else{const r=doc(orgCollection('sources'));await fsSetDoc(r,{...data,code:name.toLowerCase().replace(/\s+/g,'-'),createdAt:serverTimestamp()});upsertLocal('sources',{id:r.id,...data});const p=selectedPeriod();if(p){const er=doc(orgCollection('energyReadings'));await fsSetDoc(er,{periodId:p.id,sourceId:r.id,previousReading:null,currentReading:null,pricePerKwh:data.defaultRate,consumption:null,cost:null,status:'Pending',createdAt:serverTimestamp(),updatedAt:serverTimestamp()});}toast('تمت إضافة المصدر');}closeModal();state.loaded=false;await loadData(true);renderEnergy();};}
 
 function renderCosts(){
   setTitle('المصاريف والطوارئ','');
@@ -1059,9 +681,9 @@ function renderCosts(){
 }
 function allocationPreview(kind,amount,perPerson,count){
   const n=Math.max(0,Math.floor(num(count)));const a=num(amount);const pp=num(perPerson);
-  if(kind==='per_person'){const each=roundMoney(pp);return {count:n,each,total:each*n,label:`${money(each)} لكل ساكن × ${n}`};}
-  if(kind==='divide'){const each=n?roundMoney(a/n):0;return {count:n,each,total:a,label:`${money(a)} ÷ ${n}`};}
-  if(kind==='equal_all'){const each=n?roundMoney(a/n):0;return {count:n,each,total:a,label:`على ${n} ساكن`};}
+  if(kind==='per_person') return {count:n,each:pp,total:pp*n,label:`${money(pp)} لكل ساكن × ${n}`};
+  if(kind==='divide') return {count:n,each:n? a/n:0,total:a,label:`${money(a)} ÷ ${n}`};
+  if(kind==='equal_all') return {count:n,each:n? a/n:0,total:a,label:`على ${n} ساكن`};
   return {count:0,each:0,total:0,label:'بدون توزيع'};
 }
 function showCostForm(pid,id){
@@ -1100,15 +722,13 @@ function showContributionForm(pid,id){
   if(!can('admin','manager','accountant')){toast('المساهمات مخصصة للإدارة والمحاسبة','error');return;}
   const c=id?(state.data.contributions||[]).find(x=>x.id===id):null;
   const type=contributionType(c);
-  openModal(`<h2>${c?'تعديل مساهمة':'إضافة مساهمة'}</h2><p class="modal-lead">حدد المسار المحاسبي للمبلغ قبل الحفظ حتى لا يختلط الصندوق مع تكلفة الماء أو المصاريف.</p><div class="form-grid"><div class="field full"><label>نوع المساهمة</label><select id="xType"><option value="utility_discount" ${type==='utility_discount'?'selected':''}>خصم من الماء والكهرباء — الافتراضي</option><option value="expense_discount" ${type==='expense_discount'?'selected':''}>خصم من المصاريف</option><option value="fund_contribution" ${type==='fund_contribution'?'selected':''}>مساهمة للصندوق</option></select></div><div class="field"><label>التاريخ</label><input id="xDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="xAmount" type="number" min="0" step="0.01" value="${c?.amount??''}"></div><div class="field"><label>الساكن المستفيد / صاحب المساهمة</label><select id="xSubscriber"><option value="">مساهمة عامة</option>${(state.data.subscribers||[]).filter(x=>x.active!==false).map(s=>`<option value="${s.id}" ${sameId(s.id,c?.subscriberId)?'selected':''}>${safe(s.name||s.code||s.id)}</option>`).join('')}</select></div><div class="field full"><label>البيان</label><input id="xDesc" value="${safe(c?.description||'مساهمة')}" placeholder="مثال: مساهمة من أحد السكان"></div></div><div class="section-note" id="contributionPathNote"></div><div class="actions"><button class="btn primary" id="saveContribution">حفظ</button><button class="btn ghost" id="cancelContribution">إلغاء</button></div>`);
+  openModal(`<h2>${c?'تعديل مساهمة':'إضافة مساهمة'}</h2><p class="modal-lead">حدد المسار المحاسبي للمبلغ قبل الحفظ حتى لا يختلط الصندوق مع تكلفة الماء أو المصاريف.</p><div class="form-grid"><div class="field full"><label>نوع المساهمة</label><select id="xType"><option value="utility_discount" ${type==='utility_discount'?'selected':''}>خصم من الماء والكهرباء — الافتراضي</option><option value="expense_discount" ${type==='expense_discount'?'selected':''}>خصم من المصاريف</option><option value="fund_contribution" ${type==='fund_contribution'?'selected':''}>مساهمة للصندوق</option></select></div><div class="field"><label>التاريخ</label><input id="xDate" type="date" value="${safe(c?.date||dateNow())}"></div><div class="field"><label>المبلغ</label><input id="xAmount" type="number" min="0" step="0.01" value="${c?.amount??''}"></div><div class="field full"><label>البيان</label><input id="xDesc" value="${safe(c?.description||'مساهمة')}" placeholder="مثال: مساهمة من أحد السكان"></div></div><div class="section-note" id="contributionPathNote"></div><div class="actions"><button class="btn primary" id="saveContribution">حفظ</button><button class="btn ghost" id="cancelContribution">إلغاء</button></div>`);
   const updateNote=()=>{const t=$('#xType').value;$('#contributionPathNote').innerHTML=t==='fund_contribution'?'<b>المسار:</b> ستضاف القيمة مباشرة إلى الإيرادات و الصندوق ولن تُخصم من الماء أو المصاريف.':t==='expense_discount'?'<b>المسار:</b> ستخصم القيمة من المصاريف الداخلة في الحساب ولن تُضاف للصندوق.':'<b>المسار:</b> ستخفف صافي تكلفة الماء والكهرباء قبل حساب سعر الكوب ولن تُضاف للصندوق.';};
   $('#xType').onchange=updateNote;updateNote();$('#cancelContribution').onclick=closeModal;
   $('#saveContribution').onclick=async()=>{
     const amount=num($('#xAmount').value),date=$('#xDate').value,type=$('#xType').value,description=$('#xDesc').value.trim()||'مساهمة';
     if(amount<=0||!date){toast('أكمل التاريخ والمبلغ','error');return;}
     const data={periodId:pid,date,amount,description,contributionType:type,createdBy:c?.createdBy||state.user.uid,updatedAt:serverTimestamp()};
-    const linkedSubscriberId=c?.subscriberId||$('#xSubscriber')?.value||null;
-    if(linkedSubscriberId) data.subscriberId=linkedSubscriberId;
     if(c && state.profile?.role==='accountant' && !sameId(c.createdBy,state.user.uid) && !isCurrentPeriodRecord(c)){ await createApprovalRequest('update',orgDoc('contributions',id),data,c); return; }
     const batch=writeBatch(db),ref=c?orgDoc('contributions',id):doc(orgCollection('contributions'));
     if(c) batch.update(ref,data); else batch.set(ref,{...data,createdAt:serverTimestamp()});
@@ -1122,7 +742,7 @@ function showContributionForm(pid,id){
       data.fundRevenueId=revRef.id;
       if(c) batch.update(ref,{fundRevenueId:revRef.id}); else batch.update(ref,{fundRevenueId:revRef.id});
     } else if(c?.fundRevenueId){ batch.update(ref,{fundRevenueId:null}); }
-    await batch.commit();await addAudit(c?'تعديل':'إضافة','contributions',ref.id,`${c?'تعديل':'إضافة'} مساهمة «${description}» بمبلغ ${money(amount)}`);state.loaded=false;await loadData(true);await syncPeriodWaterPrice(pid);closeModal();renderContributions();toast(c?'تم تعديل المساهمة':'تمت إضافة المساهمة');
+    await batch.commit();state.loaded=false;await loadData(true);await syncPeriodWaterPrice(pid);closeModal();renderContributions();toast(c?'تم تعديل المساهمة':'تمت إضافة المساهمة');
   };
 }
 async function deleteContribution(id){
@@ -1165,8 +785,8 @@ function subscriberRowsSorted(rows,sort){
 }
 function bindSubscriberActions(){$$('[data-edit-sub]').forEach(b=>b.onclick=()=>showSubscriberForm(b.dataset.editSub));$$('[data-delete-sub]').forEach(b=>b.onclick=()=>deleteSubscriber(b.dataset.deleteSub));}
 
-function showBuildingForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة البنايات','error');return;}const b=id?(state.data.buildings||[]).find(x=>x.id===id):null;openModal(`<h2>${b?'تعديل البناية':'إضافة بناية'}</h2><p class="modal-lead">مثال: البناية الأولى، البناية الثانية.</p><div class="form-grid"><div class="field"><label>اسم البناية</label><input id="bName" value="${safe(b?.name||'')}"></div><div class="field"><label>الكود</label><input id="bCode" value="${safe(b?.code||'')}"></div></div><div class="actions"><button class="btn primary" id="saveBuilding">حفظ</button><button class="btn ghost" id="cancelBuilding">إلغاء</button></div>`);$('#cancelBuilding').onclick=closeModal;$('#saveBuilding').onclick=async()=>{const name=$('#bName').value.trim(),code=$('#bCode').value.trim();if(!name||!code){toast('اكتب الاسم والكود','error');return;}if(b){await updateDoc(orgDoc('buildings',id),{name,code,updatedAt:serverTimestamp()});await addAudit('تعديل','buildings',id,`تعديل البناية «${name}»`);}else{const r=doc(orgCollection('buildings'));await fsSetDoc(r,{name,code,active:true,createdAt:serverTimestamp()});await addAudit('إضافة','buildings',r.id,`إضافة البناية «${name}» (${code})`);}state.loaded=false;await loadData(true);closeModal();toast('تم حفظ البناية');renderSubscribers();};}
-function showUnitForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة الوحدات','error');return;}const u=id?(state.data.units||[]).find(x=>x.id===id):null;openModal(`<h2>${u?'تعديل الوحدة':'إضافة وحدة'}</h2><div class="form-grid"><div class="field"><label>البناية</label><select id="uBuilding"><option value="">اختر</option>${(state.data.buildings||[]).map(b=>`<option value="${b.id}" ${u?.buildingId===b.id?'selected':''}>${safe(b.name)}</option>`).join('')}</select></div><div class="field"><label>رقم الوحدة</label><input id="uCode" value="${safe(u?.code||'')}"></div><div class="field"><label>الدور</label><input id="uFloor" value="${safe(u?.floor||'')}"></div></div><div class="actions"><button class="btn primary" id="saveUnit">حفظ</button><button class="btn ghost" id="cancelUnit">إلغاء</button></div>`);$('#cancelUnit').onclick=closeModal;$('#saveUnit').onclick=async()=>{const buildingId=$('#uBuilding').value,code=$('#uCode').value.trim();if(!buildingId||!code){toast('اختر البناية واكتب رقم الوحدة','error');return;}const data={buildingId,code,unitNumber:code,floor:$('#uFloor').value.trim(),active:true,updatedAt:serverTimestamp()};if(u){await updateDoc(orgDoc('units',id),data);await addAudit('تعديل','units',id,`تعديل الوحدة «${code}» في البناية «${buildingName(buildingId)}»`);}else{const r=doc(orgCollection('units'));await fsSetDoc(r,{...data,createdAt:serverTimestamp()});await addAudit('إضافة','units',r.id,`إضافة الوحدة «${code}» في البناية «${buildingName(buildingId)}»`);}state.loaded=false;await loadData(true);closeModal();toast('تم حفظ الوحدة');renderSubscribers();};}
+function showBuildingForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة البنايات','error');return;}const b=id?(state.data.buildings||[]).find(x=>x.id===id):null;openModal(`<h2>${b?'تعديل البناية':'إضافة بناية'}</h2><p class="modal-lead">مثال: البناية الأولى، البناية الثانية.</p><div class="form-grid"><div class="field"><label>اسم البناية</label><input id="bName" value="${safe(b?.name||'')}"></div><div class="field"><label>الكود</label><input id="bCode" value="${safe(b?.code||'')}"></div></div><div class="actions"><button class="btn primary" id="saveBuilding">حفظ</button><button class="btn ghost" id="cancelBuilding">إلغاء</button></div>`);$('#cancelBuilding').onclick=closeModal;$('#saveBuilding').onclick=async()=>{const name=$('#bName').value.trim(),code=$('#bCode').value.trim();if(!name||!code){toast('اكتب الاسم والكود','error');return;}if(b)await updateDoc(orgDoc('buildings',id),{name,code,updatedAt:serverTimestamp()});else{const r=doc(orgCollection('buildings'));await fsSetDoc(r,{name,code,active:true,createdAt:serverTimestamp()});}state.loaded=false;await loadData(true);closeModal();toast('تم حفظ البناية');renderSubscribers();};}
+function showUnitForm(id){if(!can('admin','manager','accountant')){toast('لا تملك صلاحية إدارة الوحدات','error');return;}const u=id?(state.data.units||[]).find(x=>x.id===id):null;openModal(`<h2>${u?'تعديل الوحدة':'إضافة وحدة'}</h2><div class="form-grid"><div class="field"><label>البناية</label><select id="uBuilding"><option value="">اختر</option>${(state.data.buildings||[]).map(b=>`<option value="${b.id}" ${u?.buildingId===b.id?'selected':''}>${safe(b.name)}</option>`).join('')}</select></div><div class="field"><label>رقم الوحدة</label><input id="uCode" value="${safe(u?.code||'')}"></div><div class="field"><label>الدور</label><input id="uFloor" value="${safe(u?.floor||'')}"></div></div><div class="actions"><button class="btn primary" id="saveUnit">حفظ</button><button class="btn ghost" id="cancelUnit">إلغاء</button></div>`);$('#cancelUnit').onclick=closeModal;$('#saveUnit').onclick=async()=>{const buildingId=$('#uBuilding').value,code=$('#uCode').value.trim();if(!buildingId||!code){toast('اختر البناية واكتب رقم الوحدة','error');return;}const data={buildingId,code,unitNumber:code,floor:$('#uFloor').value.trim(),active:true,updatedAt:serverTimestamp()};if(u)await updateDoc(orgDoc('units',id),data);else{const r=doc(orgCollection('units'));await fsSetDoc(r,{...data,createdAt:serverTimestamp()});}state.loaded=false;await loadData(true);closeModal();toast('تم حفظ الوحدة');renderSubscribers();};}
 async function syncNewResidentServices(subscriber, meter){
   if(!subscriber || subscriber.type==='خارجي' || subscriber.active===false) return;
   const periods=allPeriodsAscending();
@@ -1183,7 +803,7 @@ async function syncNewResidentServices(subscriber, meter){
       .filter(x=>String(x.p.startDate||'')<String(p.startDate||''))
       .sort((a,b)=>String(b.p.startDate).localeCompare(String(a.p.startDate)))[0]?.r?.currentReading??null;
     const rr=doc(orgCollection('readings'));
-    ops.push(b=>b.set(rr,{periodId:p.id,meterId:meter.id,previousReading:prior,currentReading:null,consumption:null,unitPrice:(currentTotals(p.id).appliedPrice||null),chargeAmount:null,status:'Pending',createdAt:now,updatedAt:now,createdBy:state.user.uid}));
+    ops.push(b=>b.set(rr,{periodId:p.id,meterId:meter.id,previousReading:prior,currentReading:null,consumption:null,unitPrice:p.waterUnitPrice??null,chargeAmount:null,status:'Pending',createdAt:now,updatedAt:now,createdBy:state.user.uid}));
   }
   // A new resident is included in already-applied services for the current/latest billing period only.
   // This avoids charging historical months retroactively.
@@ -1254,7 +874,6 @@ function showSubscriberForm(id){
     const data={name,code,type,phone:$('#fPhone').value.trim(),buildingId:type==='خارجي'?null:buildingId,unitId:type==='خارجي'?null:unitId,notes:$('#fNotes').value.trim(),active:true};
     if(s){
       await updateDoc(orgDoc('subscribers',id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
-      await addAudit('تعديل','subscribers',id,`تعديل بيانات الساكن «${name}»: ${describeChanges(s,data)}`);
       let meter=(state.data.meters||[]).find(m=>sameId(m.subscriberId,id));
       if(meter) await updateDoc(orgDoc('meters',meter.id),{unitId:data.unitId,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
       else if(type!=='خارجي'){
@@ -1271,7 +890,6 @@ function showSubscriberForm(id){
       if(mr) batch.set(mr,{meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true,createdAt:serverTimestamp(),createdBy:state.user.uid});
       await batch.commit();
       upsertLocal('subscribers',{id:sr.id,...data});
-      await addAudit('إضافة','subscribers',sr.id,`إضافة ${type==='خارجي'?'المستهلك الخارجي':'الساكن'} «${name}» (${code})`);
       if(mr) upsertLocal('meters',{id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true});
       if(mr) await syncNewResidentServices({...data,id:sr.id},{id:mr.id,meterCode:`W-${code}`,meterType:'مياه',subscriberId:sr.id,unitId:data.unitId,active:true});
       toast(type==='خارجي'?'تمت إضافة المستهلك الخارجي':'تمت إضافة الساكن وربطه بكل خدماته الأساسية');
@@ -1317,7 +935,6 @@ function showPaymentForm(id=null){
       batch.set(ref,{subscriberId,periodId,amount,paymentDate,method:$('#payMethod').value,receiptNumber:$('#payReceipt').value.trim(),note:$('#payNote').value.trim(),createdBy:state.user.uid,createdAt:serverTimestamp()});
       batch.set(lr,{subscriberId,periodId,transactionType:'PAYMENT',credit:amount,debit:0,description:'دفعة',referenceId:ref.id,paymentDate,createdAt:serverTimestamp(),createdBy:state.user.uid});
       await batch.commit();
-      if(!existing) await addAudit('إضافة','payments',ref.id,`تسجيل دفعة ${money(amount)} للساكن ${(state.data.subscribers||[]).find(x=>sameId(x.id,subscriberId))?.name||'—'}`);
     }
     closeModal();state.loaded=false;await loadData(true);toast(existing?'تم تعديل الدفعة':'تم تسجيل الدفعة');renderPayments();
   };
@@ -1396,16 +1013,16 @@ async function calculateWeek(pid){
   if(t.waterTotal<=0){toast('إجمالي استهلاك المياه يساوي صفرًا. راجع قراءات السكان والخارجي.','error');return;}if(t.netCost<0){toast('صافي التكلفة سلبي. راجع المصاريف والمساهمات.','error');return;}
   const roundDiff=(t.appliedPrice*t.waterTotal)-t.netCost;const ops=[];ops.push(b=>b.update(orgDoc('periods',pid),{waterUnitPrice:t.appliedPrice,rawWaterUnitPrice:t.rawPrice,totalWaterConsumption:t.waterTotal,netOperationalCost:t.netCost,roundingDifference:roundDiff,status:'Calculated',calculatedAt:serverTimestamp(),calculatedBy:state.user.uid}));
   for(const existing of (state.data.ledger||[]).filter(x=>x.periodId===pid&&x.transactionType==='WATER'))ops.push(b=>b.delete(orgDoc('ledger',existing.id)));
-  for(const r of t.readings){if(r.currentReading==null||r.previousReading==null)continue;const m=(state.data.meters||[]).find(x=>x.id===r.meterId);const s=subscriberByMeter(m);if(!s)continue;const consumption=Math.max(0,num(r.currentReading)-num(r.previousReading))/1000;const charge=waterChargeAmount(consumption,t.appliedPrice);ops.push(b=>b.update(orgDoc('readings',r.id),{consumption,unitPrice:t.appliedPrice,chargeAmount:charge,status:'Calculated',updatedAt:serverTimestamp()}));const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:s.id,periodId:pid,transactionType:'WATER',debit:charge,credit:0,description:`مياه ${t.period.label||''}`,referenceId:r.id,createdAt:serverTimestamp(),createdBy:state.user.uid}));}
+  for(const r of t.readings){if(r.currentReading==null||r.previousReading==null)continue;const m=(state.data.meters||[]).find(x=>x.id===r.meterId);const s=subscriberByMeter(m);if(!s)continue;const consumption=Math.max(0,num(r.currentReading)-num(r.previousReading))/1000;const charge=consumption*t.appliedPrice;ops.push(b=>b.update(orgDoc('readings',r.id),{consumption,unitPrice:t.appliedPrice,chargeAmount:charge,status:'Calculated',updatedAt:serverTimestamp()}));const lr=doc(orgCollection('ledger'));ops.push(b=>b.set(lr,{subscriberId:s.id,periodId:pid,transactionType:'WATER',debit:charge,credit:0,description:`مياه ${t.period.label||''}`,referenceId:r.id,createdAt:serverTimestamp(),createdBy:state.user.uid}));}
   await commitOps(ops);state.loaded=false;await loadData(true);toast(`تم حساب الأسبوع. سعر الكوب ${t.appliedPrice} ₪`);await navigate('periods',pid,true);
 }
 
 function renderDebts(){
   setTitle('الديون السابقة','سجّل ما بقي من الفترات القديمة، وسيظهر كله كرُصيد/دين سابق قبل إضافة مياه الأسبوع الحالي.');
-  if(!canView('debts')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة غير متاحة','لا تملك صلاحية فتح هذه الصفحة.')}</section>`;return;}
+  if(!can('admin','manager','accountant')){$('#app').innerHTML=`<section class="panel">${empty('هذه الصفحة للإدارة','لا تملك صلاحية تسجيل الديون.')}</section>`;return;}
   const debts=[...(state.data.debts||[])].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));const subs=(state.data.subscribers||[]).filter(s=>s.active!==false).sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
-  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>الديون السابقة</h2></div>${can('admin','manager','accountant')?'<button class="btn primary" id="addDebt">+ إضافة دين</button>':''}</div><div class="money-grid"><div class="money-card"><small>إجمالي الديون</small><b>${money(debts.reduce((a,d)=>a+num(d.amount),0))}</b></div><div class="money-card"><small>المتبقي</small><b>${money(debts.reduce((a,d)=>a+Math.max(0,num(d.amount)-num(d.paidAmount)),0))}</b></div></div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>الساكن</th><th>البيان</th><th>الدين</th><th>المسدد</th><th>المتبقي</th><th>إجراءات</th></tr></thead><tbody>${debts.length?debts.map(d=>{const su=subs.find(x=>x.id===d.subscriberId);return `<tr><td>${fmtDate(d.date)}</td><td>${safe(su?.name||'—')}</td><td>${safe(d.description||'—')}</td><td>${money(d.amount)}</td><td>${money(d.paidAmount||0)}</td><td class="strong">${money(Math.max(0,num(d.amount)-num(d.paidAmount)))}</td><td><div class="row-actions">${can('admin','manager','accountant')?`<button class="mini" data-edit-debt="${d.id}">تعديل</button>`:''}${can('admin','manager','accountant')?`<button class="mini red" data-delete-debt="${d.id}">حذف</button>`:''}</div></td></tr>`}).join(''):`<tr><td colspan="7">${empty('لا توجد ديون مسجلة','يمكن تسجيل المتأخرات القديمة هنا.')}</td></tr>`}</tbody></table></div></section>`;
-  $('#addDebt')?.addEventListener('click',showDebtForm);$$('[data-edit-debt]').forEach(b=>b.onclick=()=>showDebtForm(b.dataset.editDebt));$$('[data-delete-debt]').forEach(b=>b.onclick=()=>deleteDebt(b.dataset.deleteDebt));
+  $('#app').innerHTML=`<section class="panel"><div class="panel-head"><div><h2>الديون السابقة</h2></div><button class="btn primary" id="addDebt">+ إضافة دين</button></div><div class="money-grid"><div class="money-card"><small>إجمالي الديون</small><b>${money(debts.reduce((a,d)=>a+num(d.amount),0))}</b></div><div class="money-card"><small>المتبقي</small><b>${money(debts.reduce((a,d)=>a+Math.max(0,num(d.amount)-num(d.paidAmount)),0))}</b></div></div><div class="table-wrap" style="margin-top:13px"><table class="table"><thead><tr><th>التاريخ</th><th>الساكن</th><th>البيان</th><th>الدين</th><th>المسدد</th><th>المتبقي</th><th>إجراءات</th></tr></thead><tbody>${debts.length?debts.map(d=>{const su=subs.find(x=>x.id===d.subscriberId);return `<tr><td>${fmtDate(d.date)}</td><td>${safe(su?.name||'—')}</td><td>${safe(d.description||'—')}</td><td>${money(d.amount)}</td><td>${money(d.paidAmount||0)}</td><td class="strong">${money(Math.max(0,num(d.amount)-num(d.paidAmount)))}</td><td><div class="row-actions"><button class="mini" data-edit-debt="${d.id}">تعديل</button>${can('admin','manager','accountant')?`<button class="mini red" data-delete-debt="${d.id}">حذف</button>`:''}</div></td></tr>`}).join(''):`<tr><td colspan="7">${empty('لا توجد ديون مسجلة','يمكن تسجيل المتأخرات القديمة هنا.')}</td></tr>`}</tbody></table></div></section>`;
+  $('#addDebt').onclick=showDebtForm;$$('[data-edit-debt]').forEach(b=>b.onclick=()=>showDebtForm(b.dataset.editDebt));$$('[data-delete-debt]').forEach(b=>b.onclick=()=>deleteDebt(b.dataset.deleteDebt));
 }
 function showDebtForm(id){
   const subs=(state.data.subscribers||[]).filter(s=>s.active!==false).sort((a,b)=>String(a.code).localeCompare(String(b.code),undefined,{numeric:true}));
@@ -1447,7 +1064,6 @@ function showDebtForm(id){
       batch.set(ref,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid});
       batch.set(lr,{subscriberId,periodId:data.openingPeriodId||null,transactionType:'DEBT',debit:amount,credit:0,description:data.description,referenceId:ref.id,date:data.date,isOpeningDebt:true,createdAt:serverTimestamp(),createdBy:state.user.uid});
       await batch.commit();
-      if(!d) await addAudit('إضافة','debts',ref.id,`تسجيل دين ${money(amount)} للساكن ${(state.data.subscribers||[]).find(x=>sameId(x.id,subscriberId))?.name||'—'}`);
     }
     state.loaded=false;await loadData(true);closeModal();toast(d?'تم تعديل الدين':'تم تسجيل الدين');renderDebts();
   };
@@ -1483,7 +1099,7 @@ function exportXlsx(rows,sheet,file){
 function subscriberExportRows(rows){return rows.filter(s=>s.active!==false).map(s=>{const u=unitForSub(s);return{الكود:s.code||'',الاسم:s.name||'',النوع:s.type||'',الهاتف:s.phone||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',المديونية:subscriberRow(s).debt??0};});}
 function exportSubscribers(rows){exportXlsx(subscriberExportRows(rows||state.data.subscribers||[]),'السكان','سكان_عمارة_الأمين.xlsx');}
 function exportPayments(rows){exportXlsx((rows||[]).map(p=>({التاريخ:p.paymentDate||'',الأسبوع:periodById(p.periodId)?.label||'',الساكن:(state.data.subscribers||[]).find(s=>sameId(s.id,p.subscriberId))?.name||'—',المبلغ:p.amount??0,الطريقة:p.method||'',الإيصال:p.receiptNumber||'',الملاحظة:p.note||''})),'الدفعات','دفعات_عمارة_الأمين.xlsx');}
-function exportPeriod(pid){const p=periodById(pid),weeklyPrice=currentTotals(pid).appliedPrice;const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>sameId(x.id,r.meterId));const ss=subscriberByMeter(m);const u=ss?unitForSub(ss):null;const consumption=r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading))/1000:(r.consumption??'');const price=readingManualPrice(r)??weeklyPrice;const charge=consumption!==''&&price!==''?waterChargeAmount(consumption,price):(r.chargeAmount??'');return{الكود:ss?.code||'',الاسم:ss?.name||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',السحب:consumption,سعر_الكوب:price,قيمة_المياه:charge};});exportXlsx(rows,'قراءات الماء',`قراءات_الماء_${p?.startDate||pid}.xlsx`);}
+function exportPeriod(pid){const p=periodById(pid);const rows=readingsForPeriod(pid).map(r=>{const m=(state.data.meters||[]).find(x=>sameId(x.id,r.meterId));const ss=subscriberByMeter(m);const u=ss?unitForSub(ss):null;return{الكود:ss?.code||'',الاسم:ss?.name||'',البناية:u?buildingName(u.buildingId):'—',الوحدة:u?.code||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',السحب:r.consumption??'',سعر_الكوب:r.unitPrice??p?.waterUnitPrice??'',قيمة_المياه:r.chargeAmount??''};});exportXlsx(rows,'قراءات الماء',`قراءات_الماء_${p?.startDate||pid}.xlsx`);}
 function exportEnergy(pid){const rows=energyForPeriod(pid).map(r=>{const src=(state.data.sources||[]).find(s=>sameId(s.id,r.sourceId));const consumption=r.consumption??(r.currentReading!=null&&r.previousReading!=null?Math.max(0,num(r.currentReading)-num(r.previousReading)):null);return{الأسبوع:periodById(pid)?.label||'',المصدر:src?.name||'—',القراءة_السابقة:r.previousReading??'',القراءة_الحالية:r.currentReading??'',الاستهلاك:consumption??'',سعر_الكيلو:r.pricePerKwh??'',التكلفة:r.cost??(consumption!=null&&r.pricePerKwh!=null?consumption*num(r.pricePerKwh):'')};});exportXlsx(rows,'الكهرباء',`كهرباء_${periodById(pid)?.startDate||pid}.xlsx`);}
 function exportBalances(rows){exportXlsx((rows||[]).filter(s=>s.type!=='خارجي'&&s.active!==false).map(s=>({الكود:s.code||'',الاسم:s.name||'',البناية:s.buildingName||unitForSub(s)&&buildingName(unitForSub(s).buildingId)||'—',الوحدة:s.unitCode||unitForSub(s)?.code||'—',المديونية:s.debt??s.balance??0})),'المديونيات','مديونيات_عمارة_الأمين.xlsx');}
 function exportSummary(pid){const t=currentTotals(pid),p=t.period;const rows=[{البيان:'الأسبوع',القيمة:p?.label||''},{البيان:'من',القيمة:p?.startDate||''},{البيان:'إلى',القيمة:p?.endDate||''},{البيان:'إجمالي استهلاك المياه',القيمة:t.waterTotal},{البيان:'تكلفة الكهرباء',القيمة:t.energyCost},{البيان:'المصاريف الأساسية',القيمة:t.baseExpense},{البيان:'خصم من المصاريف',القيمة:t.expenseDiscount},{البيان:'خصم من الماء والكهرباء',القيمة:t.utilityDiscount},{البيان:'مساهمة للصندوق',القيمة:contributionTotal(pid,'fund_contribution')},{البيان:'صافي التكلفة',القيمة:t.netCost},{البيان:'السعر الخام للكوب',القيمة:t.rawPrice},{البيان:'السعر المعتمد للكوب',القيمة:t.appliedPrice}];for(const b of t.waterBreakdown.buildings)rows.push({البيان:`استهلاك ${b.name}`,القيمة:b.total});rows.push({البيان:'استهلاك الخارجي',القيمة:t.externalWater});exportXlsx(rows,'ملخص الحساب',`ملخص_الحساب_${p?.startDate||pid}.xlsx`);}
@@ -1561,31 +1177,16 @@ function currentNonWaterCharges(id,p){
 }
 function currentWaterCharge(id,p){
   const reading=(state.data.readings||[]).find(r=>r.periodId===p.id&&(state.data.meters||[]).some(m=>m.id===r.meterId&&m.subscriberId===id));
-  const currentConsumption=reading?.consumption!=null?num(reading.consumption):(reading?.currentReading!=null&&reading?.previousReading!=null?Math.max(0,num(reading.currentReading)-num(reading.previousReading))/1000:0);
-  const storedCharge=reading?.chargeAmount!=null?num(reading.chargeAmount):null;
-  // Always prefer the figures the admin's weekly calculation already computed
-  // and saved on the reading/period (chargeAmount, unitPrice, period.waterUnitPrice).
-  // A live currentTotals(p.id) recompute needs every subscriber's readings and
-  // building breakdown; a resident session only ever loads its OWN reading, so
-  // that recompute silently used near-empty data and produced a wrong, inflated
-  // price — this is what made a resident's statement disagree with the manager's.
-  // It was also unnecessarily heavy: it re-ran a full org-wide calculation in the
-  // browser on every render instead of reading a number that was already stored.
-  const price=reading?.unitPrice!=null?num(reading.unitPrice):(readingManualPrice(reading)??(p?.waterUnitPrice!=null?num(p.waterUnitPrice):0));
-  const currentWater=storedCharge!=null?storedCharge:currentConsumption*num(price);
-  return {reading,price,currentConsumption,currentWater};
+  const price=readingManualPrice(reading)??currentTotals(p.id).appliedPrice;
+  const currentConsumption=reading?.currentReading!=null&&reading?.previousReading!=null?Math.max(0,num(reading.currentReading)-num(reading.previousReading))/1000:0;
+  return {reading,price,currentConsumption,currentWater:currentConsumption*num(price)};
 }
 function guardChargeForPeriod(id,p){
   if(!isGuardChargePeriod(p.id))return 0;
   return (state.data.ledger||[]).filter(x=>x.subscriberId===id&&x.periodId===p.id&&x.transactionType==='SERVICE'&&x.serviceCode==='GUARD')
     .reduce((a,x)=>a+num(x.debit)-num(x.credit),0);
 }
-// Per-load memoization: the reports page, the account modal, and the resident's
-// own statement all call subscriberFinancialSeries for the same subscriber
-// within one render pass. The computation only reads state.data, so it is safe
-// to cache it and invalidate the whole cache whenever loadData() refreshes.
-const _financialSeriesCache=new Map();
-function subscriberFinancialSeriesRaw(id){
+function subscriberFinancialSeries(id){
   const s=(state.data.subscribers||[]).find(x=>x.id===id);if(!s)return [];
   const periods=allPeriodsAscending();
   let runningSigned=openingCreditBeforeFirstPeriod(id)*-1;
@@ -1615,13 +1216,6 @@ function subscriberFinancialSeriesRaw(id){
     return result;
   });
 }
-function subscriberFinancialSeries(id){
-  if(_financialSeriesCache.has(id))return _financialSeriesCache.get(id);
-  const result=subscriberFinancialSeriesRaw(id);
-  _financialSeriesCache.set(id,result);
-  return result;
-}
-function invalidateFinancialSeriesCache(){_financialSeriesCache.clear();}
 function subscriberFinancialSummary(id,periodId=null){
   const p=periodId?periodById(periodId):selectedPeriod();
   const series=subscriberFinancialSeries(id);
@@ -1646,7 +1240,7 @@ function renderResidentReportCard(id,weekId,fromId,toId){
   const info=subscriberRow(sum.s),periods=residentReportPeriods(fromId,toId);
   const rows=periods.map(p=>{const x=subscriberFinancialSummary(id,p.id);return `<tr>
     <td><b>${safe(p.label||'أسبوع')}</b><br><small>${fmtDate(p.startDate)} → ${fmtDate(p.endDate)}</small></td>
-    <td>${fmt(x.currentConsumption,3)} كوب</td><td>${money(num(x.currentWater))}</td>
+    <td>${fmt(x.currentConsumption,3)} كوب</td><td>${money(Math.round(num(x.currentWater)))}</td>
     <td>${money(x.guard)}</td><td>${money(x.other)}</td><td>${money(x.previousDebt)}</td>
     <td>${money(x.finalBeforePayments)}</td><td>${money(x.periodPayments)}</td><td class="strong">${money(x.finalBalance)}</td>
   </tr>`;}).join('');
@@ -1654,7 +1248,7 @@ function renderResidentReportCard(id,weekId,fromId,toId){
     <div class="resident-report-head"><div><span class="code">${safe(sum.s.code)}</span><h2>${safe(sum.s.name)}</h2><p>${safe(info.buildingName)} · ${safe(info.unitCode)} · ${safe(sum.s.phone||'بدون هاتف')}</p></div><div class="balance-box"><span>المديونية</span><b>${money(sum.finalBalance)}</b></div></div>
     <div class="resident-message"><div class="message-head"><div><h3>الرسالة الجاهزة للساكن</h3><p>المعلومات مبنية على الأسبوع المحدد.</p></div><button class="btn primary" id="copyResidentMessage">نسخ النص</button></div><textarea id="residentMessageText" readonly>${safe(messageForResident(sum))}</textarea></div>
     <div class="account-section"><div class="section-head-inline"><div><h3>كشف الحساب الأسبوعي</h3><p>كل صف أسبوع مستقل ونفس البنود الموجودة في الرسالة.</p></div><span class="muted">${periods.length} أسبوع</span></div>
-      <div class="table-wrap resident-ledger-table"><table class="table account-report-table"><thead><tr><th>الأسبوع</th><th>سحب المياه</th><th>قيمة المياه</th><th>خدمة الحارس</th><th>مصاريف أخرى</th><th>الديون السابقة</th><th>الإجمالي قبل الدفعات</th><th>الدفعات</th><th>الإجمالي المطلوب</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا توجد أسابيع ضمن النطاق','')}</td></tr>`}</tbody></table></div>
+      <div class="table-wrap resident-ledger-table"><table class="table" style="min-width:1250px"><thead><tr><th>الأسبوع</th><th>سحب المياه</th><th>قيمة المياه</th><th>خدمة الحارس</th><th>مصاريف أخرى</th><th>الديون السابقة</th><th>الإجمالي قبل الدفعات</th><th>الدفعات</th><th>الإجمالي المطلوب</th></tr></thead><tbody>${rows||`<tr><td colspan="9">${empty('لا توجد أسابيع ضمن النطاق','')}</td></tr>`}</tbody></table></div>
     </div>
   </section>`;
   $('#copyResidentMessage').onclick=async()=>{const txt=$('#residentMessageText').value;try{await navigator.clipboard.writeText(txt);toast('تم نسخ الرسالة');}catch{const ta=$('#residentMessageText');ta.select();document.execCommand('copy');toast('تم نسخ الرسالة');}};
@@ -1665,9 +1259,9 @@ function residentPrintHtml(source,titleText='كشف حساب'){
   const title=source.querySelector('.resident-report-head');
   const tableClone=table.cloneNode(true);
   const innerTable=tableClone.querySelector('table');
-  if(innerTable){innerTable.style.minWidth='0';innerTable.style.maxWidth='100%';innerTable.style.width='100%';innerTable.style.tableLayout='fixed';}
+  if(innerTable){innerTable.style.minWidth='0';innerTable.style.maxWidth='281mm';innerTable.style.width='281mm';}
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(titleText)}</title><style>
-  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl;width:100%;max-width:100%;}body{min-height:194mm}.resident-report-head{margin:0 0 8px}.resident-report-head h2{margin:0 0 4px;font-size:18px}.resident-report-head p{margin:0;color:#5f6c67;font-size:10px}.balance-box{padding:8px;background:#eef6f3;border-radius:8px;display:inline-block;margin-top:6px}.balance-box span{display:block;font-size:7px;color:#6c7a76}.balance-box b{font-size:15px}.resident-report-card{width:100%;max-width:100%}.resident-ledger-table{width:100%;max-width:100%;overflow:visible!important}.table{width:100%!important;max-width:100%!important;min-width:0!important;border-collapse:collapse;table-layout:fixed;font-size:6.8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:3.5px 3px;text-align:center;vertical-align:middle;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere;line-height:1.25}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}.table th:nth-child(1),.table td:nth-child(1){width:11%}.table th:nth-child(2),.table td:nth-child(2){width:9%}.table th:nth-child(3),.table td:nth-child(3){width:11%}.table th:nth-child(4),.table td:nth-child(4){width:10%}.table th:nth-child(5),.table td:nth-child(5){width:11%}.table th:nth-child(6),.table td:nth-child(6){width:11%}.table th:nth-child(7),.table td:nth-child(7){width:13%}.table th:nth-child(8),.table td:nth-child(8){width:10%}.table th:nth-child(9),.table td:nth-child(9){width:14%}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
+  *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#183734;font-family:Arial,"Cairo",sans-serif;direction:rtl;width:281mm;max-width:281mm}body{min-height:194mm}.resident-report-head{margin:0 0 8px}.resident-report-head h2{margin:0 0 4px;font-size:18px}.resident-report-head p{margin:0;color:#5f6c67;font-size:10px}.balance-box{padding:8px;background:#eef6f3;border-radius:8px;display:inline-block;margin-top:6px}.balance-box span{display:block;font-size:7px;color:#6c7a76}.balance-box b{font-size:15px}.resident-report-card{width:281mm;max-width:281mm}.resident-ledger-table{width:281mm;max-width:281mm;overflow:visible!important}.table{width:281mm!important;max-width:281mm!important;min-width:0!important;border-collapse:collapse;table-layout:fixed;font-size:6.8px;direction:rtl}.table th,.table td{border:1px solid #cdd9d6;padding:3.5px 3px;text-align:center;vertical-align:middle;white-space:normal!important;word-break:break-word;overflow-wrap:anywhere;line-height:1.25}.table th{background:#edf5f2;font-weight:800}.table td:first-child{text-align:right}.table th:nth-child(1),.table td:nth-child(1){width:11%}.table th:nth-child(2),.table td:nth-child(2){width:9%}.table th:nth-child(3),.table td:nth-child(3){width:11%}.table th:nth-child(4),.table td:nth-child(4){width:10%}.table th:nth-child(5),.table td:nth-child(5){width:11%}.table th:nth-child(6),.table td:nth-child(6){width:11%}.table th:nth-child(7),.table td:nth-child(7){width:13%}.table th:nth-child(8),.table td:nth-child(8){width:10%}.table th:nth-child(9),.table td:nth-child(9){width:14%}@page{size:A4 landscape;margin:8mm}@media print{button{display:none!important}}
   </style></head><body><div>${title?title.outerHTML:''}</div>${tableClone.outerHTML}</body></html>`;
 }
 function printResidentReport(){
@@ -1683,20 +1277,15 @@ function printReportElement(source){
 }
 async function downloadReportElementPdf(source,s,periods){
   if(!source){toast('اعرض الكشف أولًا','error');return;}
-  if(!window.jspdf?.jsPDF||!window.html2canvas){toast('مكوّن PDF غير محمل. حدّث الصفحة وجرب مرة ثانية.','error');return;}
+  if(!window.html2pdf){toast('مكوّن PDF غير محمل. حدّث الصفحة وجرب مرة ثانية.','error');return;}
   const html=residentPrintHtml(source,'كشف حساب');if(!html){toast('تعذر العثور على جدول الكشف','error');return;}
-  const iframe=document.createElement('iframe');iframe.style.cssText='position:fixed;width:1060px;height:1500px;left:-12000px;top:-12000px;border:0;opacity:0';document.body.appendChild(iframe);
+  const iframe=document.createElement('iframe');iframe.style.cssText='position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;border:0;opacity:0';document.body.appendChild(iframe);
   try{
     const idoc=iframe.contentDocument;idoc.open();idoc.write(html);idoc.close();
     await new Promise(resolve=>setTimeout(resolve,350));
     try{await idoc.fonts?.ready;}catch{}
-    const headEl=idoc.querySelector('.resident-report-head');
-    const table=idoc.querySelector('table');
-    if(!table){toast('تعذر العثور على جدول الكشف','error');return;}
-    const filename=`كشف_حساب_${String(s?.name||'ساكن').replace(/[\\/:*?"<>|]+/g,'_')}.pdf`;
-    // Row-safe export: every row is measured before pagination so a table row
-    // is never rasterized half on one PDF page and half on the next.
-    await exportRowSafePdf({headHtml:headEl?headEl.outerHTML:'',table,filename});
+    const host=idoc.body;const filename=`كشف_حساب_${String(s?.name||'ساكن').replace(/[\\/:*?"<>|]+/g,'_')}.pdf`;
+    await window.html2pdf().set({margin:[6,6,8,6],filename,image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff',logging:false,scrollX:0,scrollY:0,windowWidth:1063,windowHeight:750},jsPDF:{unit:'mm',format:'a4',orientation:'landscape',compress:true},pagebreak:{mode:['css','legacy'],avoid:['tr','.table tr']}}).from(host).save();
     toast('تم تنزيل كشف الحساب PDF');
   }catch(e){console.error(e);toast('تعذر إنشاء PDF','error');}
   finally{iframe.remove();}
@@ -1713,10 +1302,10 @@ function renderSettings(){
   $('#app').innerHTML=`
   <section class="settings-grid">
    <div class="panel"><div class="panel-head"><div><h2>حسابك</h2><p class="muted">أنت مدير النظام ولديك كامل الصلاحيات.</p></div></div><div class="member-row"><div class="avatar">${safe((state.user.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(state.user.displayName||'—')}</b><span>${safe(state.user.email||'—')} • ${roleName(state.profile.role)}</span></div></div><div class="actions"><button class="btn ghost" id="logoutSet">تسجيل الخروج</button></div></div>
-   <div class="panel"><div class="panel-head"><div><h2>المستخدمون والصلاحيات</h2><p class="muted">الحساب الجديد يبقى بانتظار موافقة مدير النظام. بعد القبول يصبح الحساب ساكنًا ويمكنك ربطه باسم الساكن أو تغيير صلاحيته لاحقًا.</p></div></div><div class="members">${members.length?members.map(m=>`<div class="member-row"><div class="avatar">${safe((m.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(m.displayName||'—')}</b><span>${safe(m.email||'')}</span></div>${m.id===state.user.uid?'<span class="badge ok">حسابك</span>':`<select data-role="${m.id}">${roleOpts.map(([k,v])=>`<option value="${k}" ${m.role===k?'selected':''}>${v}</option>`).join('')}</select>${m.role==='pending'?`<button class="mini" data-approve-member="${m.id}">قبول</button>`:''}${m.role==='resident'?`<div class="resident-link-control compact"><select aria-label="الساكن المرتبط" data-resident-sub="${m.id}"><option value="">اختر الساكن…</option>${(state.data.subscribers||[]).filter(x=>x.type!=='خارجي').map(x=>`<option value="${x.id}" ${sameId(m.residentSubscriberId,x.id)||sameId(m.residentId,x.id)?'selected':''}>${safe(x.name)}</option>`).join('')}</select></div>`:''}<button class="mini red" data-delete-member="${m.id}">حذف</button>`}</div>`).join(''):empty('لا يوجد مستخدمون','سيظهر الحساب بعد تسجيل الدخول.')}</div></div>
+   <div class="panel"><div class="panel-head"><div><h2>المستخدمون والصلاحيات</h2><p class="muted">الحساب الجديد يبقى بانتظار موافقة مدير النظام. بعد القبول تظهر له صلاحية المشاهد ويمكنك تغييرها لاحقًا.</p></div></div><div class="members">${members.length?members.map(m=>`<div class="member-row"><div class="avatar">${safe((m.displayName||'م').slice(0,1))}</div><div class="member-info"><b>${safe(m.displayName||'—')}</b><span>${safe(m.email||'')}</span></div>${m.id===state.user.uid?'<span class="badge ok">حسابك</span>':`<select data-role="${m.id}">${roleOpts.map(([k,v])=>`<option value="${k}" ${m.role===k?'selected':''}>${v}</option>`).join('')}</select>${m.role==='pending'?`<button class="mini" data-approve-member="${m.id}">قبول</button>`:''}${m.role==='resident'?`<select data-resident-sub="${m.id}"><option value="">اختر الساكن</option>${(state.data.subscribers||[]).filter(x=>x.type!=='خارجي').map(x=>`<option value="${x.id}" ${sameId(m.residentSubscriberId,x.id)?'selected':''}>${safe(x.name)}</option>`).join('')}</select>`:''}<button class="mini red" data-delete-member="${m.id}">حذف</button>`}</div>`).join(''):empty('لا يوجد مستخدمون','سيظهر الحساب بعد تسجيل الدخول.')}</div></div>
   </section>
-  <section class="panel"><div class="panel-head"><div><h2>طلبات الموافقة</h2><p class="muted">تظهر هنا الطلبات الجوهرية فقط. العمليات التابعة لا تتحول إلى طلبات منفصلة.</p></div><div class="panel-actions"><span class="badge warn">${approvals.length} معلّق</span>${approvals.length?'<button class="btn soft" id="approveAllBtn">قبول الكل</button><button class="btn danger" id="rejectAllBtn">رفض الكل</button>':''}</div></div>${approvals.length?`<div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>المستخدم</th><th>الإجراء</th><th>القسم</th><th>السجل</th><th>إجراءات</th></tr></thead><tbody>${approvals.map(a=>`<tr><td>${auditDate(a.createdAt)}</td><td>${safe(a.requesterName||a.requesterEmail)}</td><td><span class="badge info">${a.action==='delete'?'حذف':'تعديل'}</span></td><td>${safe(a.summary||VIEW_NAMES[a.collection]||a.collection||'—')}</td><td>${safe(a.details||a.docId||'—')}</td><td><div class="row-actions"><button class="mini" data-approve-request="${a.id}">موافقة</button><button class="mini red" data-reject-request="${a.id}">رفض</button></div></td></tr>`).join('')}</tbody></table></div>`:empty('لا توجد طلبات معلقة','كل الطلبات تمت معالجتها.')}</section>
-  <section class="panel"><div class="panel-head"><div><h2>مراقبة الحركات</h2><p class="muted">تظهر الحركات الجوهرية فقط: إضافة، تعديل، حذف، إدخال قراءة/فتح أسبوع، وطلبات الموافقة.</p></div><button class="btn danger" id="clearAuditBtn">مسح كل حركات المراقبة</button></div><div class="toolbar audit-filters"><select id="auditAction"><option value="">كل الأنواع</option><option>إضافة</option><option>تعديل</option><option>حذف</option><option>طلب موافقة</option><option>موافقة</option><option>رفض</option></select><select id="auditUser"><option value="">كل الأشخاص</option>${[...new Set(logs.map(x=>x.userEmail||x.userName).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(v)}</option>`).join('')}</select><select id="auditCollection"><option value="">كل الأقسام</option>${[...new Set(logs.map(x=>x.collection).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(VIEW_NAMES[v]||v)}</option>`).join('')}</select><select id="auditSort"><option value="newest">الأحدث أولًا</option><option value="oldest">الأقدم أولًا</option></select></div><div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>الشخص</th><th>الوظيفة</th><th>النوع</th><th>القسم</th><th>التفصيل</th></tr></thead><tbody id="auditBody">${auditRows(logs)}</tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><div><h2>طلبات الموافقة</h2><p class="muted">تظهر هنا طلبات موظف الحسابات لتعديل أو حذف بيانات سابقة.</p></div><span class="badge warn">${approvals.length} معلّق</span></div>${approvals.length?`<div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>المستخدم</th><th>الإجراء</th><th>القسم</th><th>السجل</th><th>إجراءات</th></tr></thead><tbody>${approvals.map(a=>`<tr><td>${auditDate(a.createdAt)}</td><td>${safe(a.requesterName||a.requesterEmail)}</td><td><span class="badge info">${a.action==='delete'?'حذف':'تعديل'}</span></td><td>${safe(VIEW_NAMES[a.collection]||a.collection||'—')}</td><td><code>${safe(a.docId||'—')}</code></td><td><div class="row-actions"><button class="mini" data-approve-request="${a.id}">موافقة</button><button class="mini red" data-reject-request="${a.id}">رفض</button></div></td></tr>`).join('')}</tbody></table></div>`:empty('لا توجد طلبات معلقة','كل الطلبات تمت معالجتها.')}</section>
+  <section class="panel"><div class="panel-head"><div><h2>مراقبة الحركات</h2><p class="muted">راجع من أضاف أو عدّل أو حذف أو فتح قسمًا، مع الوقت والحساب.</p></div></div><div class="toolbar audit-filters"><select id="auditAction"><option value="">كل الأنواع</option><option>إضافة</option><option>تعديل</option><option>حذف</option><option>قراءة</option><option>طلب موافقة</option><option>موافقة</option><option>رفض</option></select><select id="auditUser"><option value="">كل الأشخاص</option>${[...new Set(logs.map(x=>x.userEmail||x.userName).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(v)}</option>`).join('')}</select><select id="auditCollection"><option value="">كل الأقسام</option>${[...new Set(logs.map(x=>x.collection).filter(Boolean))].map(v=>`<option value="${safe(v)}">${safe(VIEW_NAMES[v]||v)}</option>`).join('')}</select><select id="auditSort"><option value="newest">الأحدث أولًا</option><option value="oldest">الأقدم أولًا</option></select></div><div class="table-wrap"><table class="table audit-table"><thead><tr><th>الوقت</th><th>الشخص</th><th>الوظيفة</th><th>النوع</th><th>القسم</th><th>التفصيل</th></tr></thead><tbody id="auditBody">${auditRows(logs)}</tbody></table></div></section>
   <section class="panel danger-panel"><div class="panel-head"><div><h2>الحذف الآمن</h2></div></div><div class="danger-actions"><select id="deletePeriod"><option value="">اختر أسبوعًا</option>${periods.map(p=>`<option value="${p.id}">${safe(p.label)} — ${fmtDate(p.startDate)}</option>`).join('')}</select><button class="btn danger" id="deletePeriodBtn">حذف الأسبوع المختار</button><button class="btn danger" id="deleteExceptSelectedBtn">حذف كل الأسابيع ما عدا المختار</button></div></section>`;
   $('#logoutSet').onclick=()=>signOut(auth);
   $$('[data-role]').forEach(s=>s.onchange=()=>updateRole(s.dataset.role,s.value));
@@ -1724,16 +1313,14 @@ function renderSettings(){
   $$('[data-approve-member]').forEach(b=>b.onclick=()=>approveMember(b.dataset.approveMember));
   $$('[data-approve-request]').forEach(b=>b.onclick=()=>resolveApproval(b.dataset.approveRequest,true));
   $$('[data-reject-request]').forEach(b=>b.onclick=()=>resolveApproval(b.dataset.rejectRequest,false));
-  $('#approveAllBtn')?.addEventListener('click',()=>resolveAllApprovals(true));
-  $('#rejectAllBtn')?.addEventListener('click',()=>resolveAllApprovals(false));
-  $('#clearAuditBtn')?.addEventListener('click',clearAuditLogs);
   $('#deletePeriodBtn').onclick=()=>deleteWeek($('#deletePeriod').value);$('#deleteExceptSelectedBtn').onclick=()=>deleteAllExceptSelected($('#deletePeriod').value);
   const apply=()=>{let a=logs.filter(x=>!$('#auditAction').value||x.action===$('#auditAction').value).filter(x=>!$('#auditUser').value||String(x.userEmail||x.userName)===String($('#auditUser').value)).filter(x=>!$('#auditCollection').value||x.collection===$('#auditCollection').value);if($('#auditSort').value==='oldest')a.reverse();$('#auditBody').innerHTML=auditRows(a);};
   ['auditAction','auditUser','auditCollection','auditSort'].forEach(id=>$('#'+id).onchange=apply);
 }
-function auditDate(v){try{const d=v?.toDate?v.toDate():(v?.seconds?new Date(Number(v.seconds)*1000):null);if(!d)return '—';return d.toLocaleString('ar-PS',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}catch{return '—';}}
-function auditRows(rows){return rows.length?rows.slice(0,300).map(x=>`<tr><td>${auditDate(x.createdAt)}</td><td>${safe(x.userName||x.userEmail||'—')}</td><td>${safe(roleName(x.role))}</td><td><span class="badge info">${safe(x.action||'—')}</span></td><td>${safe(VIEW_NAMES[x.collection]||x.collection||(x.action==='طلب موافقة'?'طلب رئيسي':'—'))}</td><td>${safe(x.details||'—')}</td></tr>`).join(''):`<tr><td colspan="6">${empty('لا توجد حركات','لا توجد حركات مطابقة للفلاتر.')}</td></tr>`;}
-async function approveMember(uid){if(!can('admin'))return;const m=(state.data.members||[]).find(x=>x.id===uid);if(!m)return;await fsUpdateDoc(orgDoc('members',uid),{role:'resident',approvedAt:serverTimestamp(),approvedBy:state.user.uid,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal('members',{id:uid,role:'resident'});await addAudit('موافقة','members',uid,`قبول الحساب ${m.email||m.displayName}`);toast('تم قبول الحساب كساكن');renderSettings();}
+function auditDate(v){try{const d=v?.toDate?v.toDate():(v?.seconds?new Date(Number(v.seconds)*1000):null);if(!d)return '—';return d.toLocaleString('ar-PS',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}catch{return '—';}
+function describeChanges(oldData,nextData){const changed=[];const labels={amount:'المبلغ',date:'التاريخ',paymentDate:'تاريخ الدفعة',currentReading:'القراءة الحالية',previousReading:'القراءة السابقة',unitId:'الوحدة',buildingId:'البناية',subscriberId:'الساكن',periodId:'الأسبوع',pricePerKwh:'سعر الكيلو',cost:'التكلفة',description:'البيان',contributionType:'نوع المساهمة',sourceId:'المصدر'};for(const k of new Set([...Object.keys(oldData||{}),...Object.keys(nextData||{})])){if(['updatedAt','updatedBy'].includes(k))continue;const a=oldData?.[k],b=nextData?.[k];const sa=typeof a==='object'?JSON.stringify(a):String(a??'');const sb=typeof b==='object'?JSON.stringify(b):String(b??'');if(sa!==sb)changed.push(labels[k]||k);}return changed.length?`تغيير: ${changed.join('، ')}`:'تعديل بيانات السجل';}
+function auditRows(rows){return rows.length?rows.slice(0,300).map(x=>`<tr><td>${auditDate(x.createdAt)}</td><td>${safe(x.userName||x.userEmail||'—')}</td><td>${safe(roleName(x.role))}</td><td><span class="badge info">${safe(x.action||'—')}</span></td><td>${safe(VIEW_NAMES[x.collection]||x.collection||'—')}</td><td>${safe(x.details||'—')}</td></tr>`).join(''):`<tr><td colspan="6">${empty('لا توجد حركات','لا توجد حركات مطابقة للفلاتر.')}</td></tr>`;}
+async function approveMember(uid){if(!can('admin'))return;const m=(state.data.members||[]).find(x=>x.id===uid);if(!m)return;await fsUpdateDoc(orgDoc('members',uid),{role:'viewer',approvedAt:serverTimestamp(),approvedBy:state.user.uid,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal('members',{id:uid,role:'viewer'});await addAudit('موافقة','members',uid,`قبول الحساب ${m.email||m.displayName}`);toast('تم قبول الحساب كمشاهد');renderSettings();}
 async function executeApprovedDelete(req){
   const c=req.collection,id=req.docId,batch=writeBatch(db);const del=(coll,did)=>batch.delete(orgDoc(coll,did));
   if(c==='payments'){del('payments',id);for(const l of (state.data.ledger||[]).filter(x=>sameId(x.referenceId,id)&&x.transactionType==='PAYMENT'))del('ledger',l.id);
@@ -1745,36 +1332,10 @@ async function executeApprovedDelete(req){
   }else if(c==='buildings'){const units=(state.data.units||[]).filter(u=>sameId(u.buildingId,id));const unitIds=units.map(u=>u.id);const subs=(state.data.subscribers||[]).filter(s=>unitIds.some(uid=>sameId(uid,s.unitId)));if(subs.length)throw new Error('لا يمكن حذف البناية ما دامت تحتوي سكانًا. انقل السكان أولًا ثم اطلب حذفها.');del('buildings',id);for(const u of units)del('units',u.id);
   }else{del(c,id);}await batch.commit();
 }
-async function resolveApproval(id,approved,skipConfirm=false){if(!can('admin'))return;const req=(state.data.approvalRequests||[]).find(x=>x.id===id);if(!req)return;if(!skipConfirm&&!confirm(approved?'تأكيد تنفيذ الطلب؟':'رفض الطلب؟'))return;try{if(approved){if(req.action==='delete')await executeApprovedDelete(req);else if(req.action==='batchUpdate'){for(const item of (req.items||[])){await fsUpdateDoc(orgDoc(item.collection,item.docId),{...(item.payload||{}),updatedAt:serverTimestamp(),updatedBy:state.user.uid});}}else await fsUpdateDoc(orgDoc(req.collection,req.docId),{...(req.payload||{}),updatedAt:serverTimestamp(),updatedBy:state.user.uid});}await fsUpdateDoc(orgDoc('approvalRequests',id),{status:approved?'approved':'rejected',resolvedAt:serverTimestamp(),resolvedBy:state.user.uid});await addAudit(approved?'موافقة':'رفض',req.collection||'',req.docId||id,approved?`تنفيذ الطلب الرئيسي: ${req.summary||req.action}`:`رفض الطلب الرئيسي: ${req.summary||req.action}`,{requestId:id});state.loaded=false;await loadData(true);if(!skipConfirm)toast(approved?'تم تنفيذ الطلب':'تم رفض الطلب');renderSettings();}catch(e){console.error(e);toast(e?.message||'تعذر معالجة الطلب','error');throw e;}}
+async function resolveApproval(id,approved){if(!can('admin'))return;const req=(state.data.approvalRequests||[]).find(x=>x.id===id);if(!req)return;if(!confirm(approved?'تأكيد تنفيذ الطلب؟':'رفض الطلب؟'))return;try{if(approved){if(req.action==='delete')await executeApprovedDelete(req);else await fsUpdateDoc(orgDoc(req.collection,req.docId),{...(req.payload||{}),updatedAt:serverTimestamp(),updatedBy:state.user.uid});}await fsUpdateDoc(orgDoc('approvalRequests',id),{status:approved?'approved':'rejected',resolvedAt:serverTimestamp(),resolvedBy:state.user.uid});await addAudit(approved?'موافقة':'رفض',req.collection,req.docId,approved?`تنفيذ طلب ${req.action}`:`رفض طلب ${req.action}`,{requestId:id});state.loaded=false;await loadData(true);toast(approved?'تم تنفيذ الطلب':'تم رفض الطلب');renderSettings();}catch(e){console.error(e);toast(e?.message||'تعذر معالجة الطلب','error');}}
 
-async function resolveAllApprovals(approved){if(!can('admin'))return;const pending=(state.data.approvalRequests||[]).filter(x=>x.status==='pending');if(!pending.length){toast('لا توجد طلبات معلقة');return;}if(!confirm(approved?`سيتم قبول ${pending.length} طلب/طلبات وتنفيذها.`:`سيتم رفض ${pending.length} طلب/طلبات.`))return;for(const req of pending){try{await resolveApproval(req.id,approved,true);}catch(e){console.error(e);}}toast(approved?'تم قبول كل الطلبات':'تم رفض كل الطلبات');}
-async function clearAuditLogs(){if(!can('admin'))return;const logs=state.data.auditLogs||[];if(!logs.length){toast('لا توجد حركات للمسح');return;}if(!confirm(`سيتم حذف ${logs.length} حركة من سجل المراقبة نهائيًا. هل أنت متأكد؟`))return;for(let i=0;i<logs.length;i+=400){const batch=writeBatch(db);for(const row of logs.slice(i,i+400))batch.delete(orgDoc('auditLogs',row.id));await batch.commit();}state.data.auditLogs=[];toast('تم مسح حركات المراقبة');renderSettings();}
-async function assignResident(uid,subscriberId){
-  if(!can('admin'))return;
-  const s=(state.data.subscribers||[]).find(x=>sameId(x.id,subscriberId));
-  if(!subscriberId){
-    await fsUpdateDoc(orgDoc('members',uid),{residentSubscriberId:null,residentSubscriberCode:null,residentSubscriberName:null,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
-    upsertLocal('members',{id:uid,residentSubscriberId:null,residentSubscriberCode:null,residentSubscriberName:null});
-    toast('تم إلغاء ربط الساكن بالحساب');renderSettings();return;
-  }
-  await fsUpdateDoc(orgDoc('members',uid),{residentSubscriberId:subscriberId,residentSubscriberCode:s?.code||null,residentSubscriberName:s?.name||null,updatedAt:serverTimestamp(),updatedBy:state.user.uid});
-  upsertLocal('members',{id:uid,residentSubscriberId:subscriberId,residentSubscriberCode:s?.code||null,residentSubscriberName:s?.name||null});
-  await addAudit('تعديل','members',uid,`ربط حساب الساكن بالساكن «${s?.name||subscriberId}»`);
-  toast('تم ربط الحساب بالساكن');renderSettings();
-}
-async function updateRole(uid,role){
-  if(!can('admin'))return;
-  if(uid===state.user.uid&&role!=='admin'){toast('لا تنزل صلاحيتك من نفسك.','error');return;}
-  const old=(state.data.members||[]).find(x=>sameId(x.id,uid));
-  const patch={role,updatedAt:serverTimestamp(),updatedBy:state.user.uid};
-  // The resident delegation belongs to the resident role. Removing the role removes
-  // the stale link too, so a later re-assignment must be explicit.
-  if(role!=='resident') Object.assign(patch,{residentSubscriberId:null,residentId:null,linkedSubscriberId:null,subscriberId:null,residentSubscriberCode:null,residentCode:null,subscriberCode:null,residentSubscriberName:null,residentName:null,subscriberName:null});
-  await fsUpdateDoc(orgDoc('members',uid),patch);
-  await addAudit('تعديل','members',uid,old?.role==='resident'&&role!=='resident'?`تغيير صلاحية الحساب إلى ${roleName(role)} وإلغاء ربط الساكن`:`تغيير صلاحية الحساب إلى ${roleName(role)}`);
-  upsertLocal('members',{id:uid,...patch,updatedAt:Date.now()});
-  toast('تم تعديل الصلاحية');renderSettings();
-}
+async function assignResident(uid,subscriberId){if(!can('admin'))return;if(!subscriberId){await fsUpdateDoc(orgDoc('members',uid),{residentSubscriberId:null,updatedAt:serverTimestamp(),updatedBy:state.user.uid});toast('تم إلغاء ربط الساكن بالحساب');return;}await fsUpdateDoc(orgDoc('members',uid),{residentSubscriberId:subscriberId,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal('members',{id:uid,residentSubscriberId:subscriberId});await addAudit('تعديل','members',uid,'ربط حساب الساكن بساكن محدد');toast('تم ربط الحساب بالساكن');}
+async function updateRole(uid,role){if(!can('admin'))return;if(uid===state.user.uid&&role!=='admin'){toast('لا تنزل صلاحيتك من نفسك.','error');return;}await fsUpdateDoc(orgDoc('members',uid),{role,updatedAt:serverTimestamp(),updatedBy:state.user.uid}); await addAudit('تعديل','members',uid,`تغيير صلاحية الحساب إلى ${roleName(role)}`);upsertLocal('members',{id:uid,role});toast('تم تعديل الصلاحية');renderSettings();}
 async function deleteWeek(pid){
   if(!pid){toast('اختر أسبوعًا','error');return;}if(!can('admin')){toast('حذف الأسبوع مخصص للمدير','error');return;}const p=periodById(pid);if(!p)return;if(!confirm(`سيتم حذف ${p.label||'الأسبوع'} وكل البيانات المرتبطة به من النظام.\n\nهل أنت متأكد؟`))return;
   const ops=[b=>b.delete(orgDoc('periods',pid))];
@@ -1812,7 +1373,7 @@ function showGuide(){
     {title:'12) التقارير',text:'استخدم عرض الكشف ثم الطباعة أو تنزيل PDF. زر التنزيل يستخدم نفس قالب الطباعة حتى تكون النتيجة مطابقة لها.',go:'reports'},
     {title:'13) Excel',text:'ملفات Excel تُنشأ بجداول مرتبة ومروسة مع اتجاه عربي من اليمين إلى اليسار وتنسيق للصفوف والأعمدة.',go:'reports'},
     {title:'14) البيانات التاريخية',text:'هذه الصفحة تعرض البيانات التاريخية المضمنة في النظام.',go:'historical'},
-    {title:'15) الصلاحيات',text:'مدير النظام وحده يرى صفحة الإعدادات والصلاحيات. المدير يدير العمل دون إعدادات النظام. موظف الحسابات يستطيع إدخال الجديد، أما تعديل أو حذف البيانات السابقة فيرسل طلب موافقة. موظف القراءات يرى الرئيسية والكهرباء والمياه فقط. المشاهد يقرأ كل شيء دون تعديل. الساكن يُربط اسمه من مدير النظام ويرى بياناته فقط.',go:'settings'}
+    {title:'15) الصلاحيات',text:'مدير النظام وحده يرى صفحة الإعدادات والصلاحيات. المدير يدير العمل دون إعدادات النظام. موظف الحسابات يستطيع إدخال الجديد، أما تعديل أو حذف البيانات السابقة فيرسل طلب موافقة. موظف القراءات يرى الرئيسية والكهرباء والمياه فقط. المشاهد يقرأ كل شيء دون تعديل. الساكن يختار اسمه من الحساب ويرى بياناته فقط.',go:'settings'}
   ].filter(step=>canView(step.go));
   let i=0;
   const draw=()=>{const s=steps[i],last=i===steps.length-1;openModal(`<div class="guide-hero"><div class="guide-topline"><span class="guide-badge">دليل الاستخدام</span><span class="guide-counter">${i+1} / ${steps.length}</span></div><h2>${safe(s.title)}</h2><p>${safe(s.text)}</p></div><div class="guide-demo"><div class="demo-title">كيف تستخدم هذا القسم</div><div class="demo-row"><span>البيانات</span><b>تُحفظ على Firebase</b></div><div class="demo-row"><span>الإجراء</span><b>استخدم «التالي» للانتقال بين التعليمات</b></div></div><div class="guide-actions"><button class="btn ghost" id="guideClose">إغلاق</button><div class="guide-actions-right"><button class="btn ghost" id="guidePrev" ${i===0?'disabled':''}>السابق</button><button class="btn primary" id="guideNext">${last?'فتح القسم →':'التالي ←'}</button></div></div>`);$('#guideClose').onclick=closeModal;$('#guidePrev').onclick=()=>{if(i>0){i--;draw();}};$('#guideNext').onclick=()=>{if(last){closeModal();navigate(s.go);}else{i++;draw();}};};draw();
@@ -1820,32 +1381,19 @@ function showGuide(){
 
 function renderPending(){setTitle('بانتظار الموافقة','حسابك مسجل كمشاهد مبدئيًا، لكن لا يمكن الدخول قبل موافقة مدير النظام.');$('#app').innerHTML=`<section class="panel" style="max-width:680px;margin:50px auto;text-align:center;padding:40px"><div style="font-size:40px">⌛</div><h2>باقي موافقة المدير</h2><p class="muted">${safe(state.user?.email||'حسابك')} مسجل. بعد موافقة المدير ستظهر بيانات العمارة.</p><button class="btn primary" id="reloadPending">تحديث</button></section>`;$('#reloadPending').onclick=async()=>{try{state.profile=await ensureProfile();$('#userRole').textContent=roleName(state.profile.role);if(state.profile.role!=='pending'){await loadData(true);await ensureSolarBatchMigration();await ensureDefaults();refreshResidentAccountSelect();await navigate('dashboard');}else toast('ما زال الحساب بانتظار موافقة المدير','error');}catch(e){toast(e?.message||'تعذر تحديث حالة الحساب','error');}};}
 
-
-function bindSidebarNavigation(){
-  $$('.nav-item[data-view]').forEach(btn=>{
-    if(btn.dataset.navBound==='1') return;
-    btn.dataset.navBound='1';
-    btn.addEventListener('click',ev=>{
-      ev.preventDefault();
-      ev.stopPropagation();
-      const view=btn.dataset.view;
-      if(view) navigate(view);
-    });
-  });
-}
-
 // Global actions
 function authFriendlyError(e){ const c=e?.code||''; const m={ 'auth/unauthorized-domain':'الدومين غير مصرح به في Firebase. أضف majd377.github.io إلى Authorized domains.','auth/operation-not-allowed':'تسجيل الدخول بحساب Google غير مفعّل في Firebase.','auth/network-request-failed':'تعذر الاتصال بـ Firebase. تحقق من الإنترنت ثم حاول مرة أخرى.','auth/popup-blocked':'تم حظر نافذة تسجيل الدخول.','auth/popup-closed-by-user':'تم إغلاق نافذة تسجيل الدخول قبل إكمال العملية.'}; return m[c]||'';}
 $('#googleLogin')?.addEventListener('click',async()=>{const b=$('#auth-error');b.classList.add('hidden');try{await signInWithPopup(auth,provider)}catch(e){console.warn('Google popup login failed',e);const code=e?.code||'';if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment','auth/cancelled-popup-request'].includes(code)){try{await signInWithRedirect(auth,provider);return;}catch(re){console.error('Google redirect fallback failed',re);b.textContent=authFriendlyError(re)||re?.message||'تعذر تسجيل الدخول بحساب Google';b.classList.remove('hidden');return;}}b.textContent=authFriendlyError(e)||e?.message||'تعذر تسجيل الدخول بحساب Google';b.classList.remove('hidden');}});
 
 getRedirectResult(auth).catch(e=>{if(e){const b=$('#auth-error');if(b){b.textContent=authFriendlyError(e)||e?.message||'تعذر تسجيل الدخول';b.classList.remove('hidden');}}});
-function refreshResidentAccountSelect(){const sel=$('#residentAccountSelect');if(!sel)return;sel.classList.add('hidden');}
+function refreshResidentAccountSelect(){const sel=$('#residentAccountSelect');if(!sel)return;if(state.profile?.role!=='resident'){sel.classList.add('hidden');return;}const residents=(state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي');sel.classList.remove('hidden');sel.innerHTML=`<option value="">اختر اسمك</option>${residents.map(s=>`<option value="${s.id}" ${sameId(state.profile.residentSubscriberId,s.id)?'selected':''}>${safe(s.name)}</option>`).join('')}`;}
+$('#residentAccountSelect')?.addEventListener('change',async e=>{if(state.profile?.role!=='resident')return;const subscriberId=e.target.value;if(!subscriberId){toast('اختر اسم الساكن المرتبط بحسابك','error');return;}await fsUpdateDoc(orgDoc('members',state.user.uid),{residentSubscriberId:subscriberId,updatedAt:serverTimestamp(),updatedBy:state.user.uid});state.profile.residentSubscriberId=subscriberId;render();toast('تم تحديد حسابك كساكن');});
 $('#logoutBtn')?.addEventListener('click',()=>signOut(auth));
 $('#refreshBtn')?.addEventListener('click',()=>navigate(state.view,state.periodId,true));
 function isReadOnlyRole(){return ['viewer','resident'].includes(state.profile?.role);}
 function applyReadOnlyUi(){
   const ro=isReadOnlyRole();document.body.classList.toggle('readonly-role',ro);if(!ro)return;
-  $$('input:not([type="search"]),textarea,select').forEach(el=>{if(!el.closest('#resident-report-holder')&& !['residentAccountSelect','periodSelect','residentWeekSelect','repResident','repWeek','repFrom','repTo'].includes(el.id||'') && !/^rep|^subSearch$|^subSort$/.test(el.id||'')) el.disabled=true;});
+  $$('input:not([type="search"]),textarea,select').forEach(el=>{if(!el.closest('#resident-report-holder')&& !['residentAccountSelect'].includes(el.id||'') && !/^rep|^subSearch$|^subSort$/.test(el.id||'')) el.disabled=true;});
   $$('button').forEach(btn=>{const id=btn.id||'',txt=(btn.textContent||'').trim();const allowed=['refreshBtn','mobileMenu','logoutBtn','logoutSet','showResidentReport','printResidentReport','downloadResidentPdf','copyResidentMessage','guideClose','guidePrev','guideNext'].includes(id)||/^rep|^subSearch$|^subSort$/.test(id)||txt.includes('↓ تنزيل')||txt.includes('🖨')||txt==='نسخ النص'||txt==='عرض الكشف'||txt==='التالي ←'||txt==='السابق';
     const mut=/^\+|إضافة|تسجيل|حفظ|حذف|تعديل|سحب|بيع السولار|ابدأ أسبوعًا|فتح أسبوعًا|اعتماد|إعادة/.test(txt);
     if(mut&&!allowed)btn.closest('.member-row,.panel-head,.head-actions,.actions,.danger-actions,.panel,.report-card')?.classList.add('readonly-hidden');
@@ -1875,7 +1423,7 @@ function fundAllWithdrawals(){return fundRows('fundWithdrawals').slice().sort((a
 function fundRevenueTotal(){return fundRows('fundRevenues').reduce((a,x)=>a+num(x.amount),0);}
 function fundWithdrawalTotal(){return fundRows('fundWithdrawals').reduce((a,x)=>a+num(x.amount),0);}
 function residentDebtTotal(){return (state.data.subscribers||[]).filter(s=>s.active!==false&&s.type!=='خارجي').reduce((a,s)=>a+Math.max(0,num(subscriberRow(s).debt)),0);}
-function fundBalance(){return fundRevenueTotal()-fundWithdrawalTotal()-residentDebtTotal();}
+function fundBalance(){return Math.max(0,fundRevenueTotal()-fundWithdrawalTotal()-residentDebtTotal());}
 function solarBatches(){return fundRows('solarBatches').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
 function solarBatchTotal(){const rows=solarBatches();return rows.length?rows.reduce((a,x)=>a+num(x.liters),0):solarStockQty()+solarSoldTotal();}
 function solarSales(){return fundRows('solarSales').slice().sort((a,b)=>fundDateKey(b.date).localeCompare(fundDateKey(a.date)) || String(b.createdAt?.seconds||0).localeCompare(String(a.createdAt?.seconds||0)));}
@@ -1884,7 +1432,7 @@ function solarAvailableQty(){return Math.max(0,solarBatchTotal()-solarSoldTotal(
 function solarStockRow(){return fundRows('solarStock').find(x=>x.id==='main')||fundRows('solarStock')[0]||null;}
 function solarStockQty(){return Math.max(0,num(solarStockRow()?.quantity));}
 async function ensureSolarBatchMigration(){if(!can('admin','manager'))return;const batches=fundRows('solarBatches');if(batches.length)return;const legacy=solarStockRow(),sold=solarSoldTotal(),legacyQty=solarStockQty(),opening=legacyQty+sold;if(!legacy||opening<=0)return;const ref=doc(orgCollection('solarBatches'));await fsSetDoc(ref,{date:dateNow(),liters:opening,description:'رصيد سولار افتتاحي — مرحّل من النظام السابق',notes:'تم إنشاؤها تلقائيًا للمحافظة على الرصيد السابق.',source:'legacyMigration',createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});state.data.solarBatches=[{id:ref.id,date:dateNow(),liters:opening,description:'رصيد سولار افتتاحي — مرحّل من النظام السابق',notes:'تم إنشاؤها تلقائيًا للمحافظة على الرصيد السابق.',source:'legacyMigration'}];}
-async function fundUpsert(collection,id,data){const labelMap={solarBatches:'دفعة سولار',fundRevenues:'إيراد للصندوق',fundWithdrawals:'سحب من الصندوق'};if(id){await updateDoc(orgDoc(collection,id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal(collection,{id,...data});await addAudit('تعديل',collection,id,`تعديل ${labelMap[collection]||'سجل الصندوق'}${data.description?` «${data.description}»`:''}`);return id;}const ref=doc(orgCollection(collection));await fsSetDoc(ref,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});upsertLocal(collection,{id:ref.id,...data});await addAudit('إضافة',collection,ref.id,`إضافة ${labelMap[collection]||'سجل الصندوق'}${data.description?` «${data.description}»`:''}`);return ref.id;}
+async function fundUpsert(collection,id,data){if(id){await updateDoc(orgDoc(collection,id),{...data,updatedAt:serverTimestamp(),updatedBy:state.user.uid});upsertLocal(collection,{id,...data});return id;}const ref=doc(orgCollection(collection));await fsSetDoc(ref,{...data,createdAt:serverTimestamp(),createdBy:state.user.uid,updatedAt:serverTimestamp()});upsertLocal(collection,{id:ref.id,...data});return ref.id;}
 async function fundRemove(collection,id){await fsDeleteDoc(orgDoc(collection,id));removeLocal(collection,id);}
 function fundActions(collection,id){if(can('viewer'))return '—';const edit=`<button class="btn tiny ghost" data-fund-edit="${safe(collection)}:${safe(id)}">تعديل</button>`;const del=`<button class="btn tiny danger" data-fund-delete="${safe(collection)}:${safe(id)}">حذف</button>`;return `<div class="row-actions">${edit}${can('admin','manager','accountant')?del:''}</div>`;}
 function printFundSection(sourceId,title,mode='table'){const source=document.getElementById(sourceId);if(!source){toast('تعذر العثور على القسم المطلوب','error');return;}const w=window.open('','_blank','width=1400,height=900');if(!w){toast('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول.','error');return;}let content='';if(mode==='summary'){content=`<table class="print-table"><thead><tr><th>البند</th><th>القيمة</th></tr></thead><tbody><tr><td>إجمالي الإيرادات</td><td>${safe(money(fundRevenueTotal()))}</td></tr><tr><td>إجمالي السحب من الصندوق</td><td>${safe(money(fundWithdrawalTotal()))}</td></tr><tr><td>مديونية السكان</td><td>${safe(money(residentDebtTotal()))}</td></tr><tr><td>المتبقي في صندوق العمارة</td><td>${safe(money(fundBalance()))}</td></tr><tr><td>إجمالي دفعات السولار</td><td>${safe(fmt(solarBatchTotal(),3))} لتر</td></tr><tr><td>إجمالي مبيعات السولار</td><td>${safe(fmt(solarSoldTotal(),3))} لتر</td></tr><tr><td>رصيد السولار الحالي</td><td>${safe(fmt(solarAvailableQty(),3))} لتر</td></tr></tbody></table>`;}else{const table=source.querySelector('table');if(!table){toast('تعذر العثور على جدول القسم','error');return;}const clone=table.cloneNode(true);clone.querySelectorAll('[data-fund-edit],[data-fund-delete],.row-actions').forEach(x=>x.remove());content=clone.outerHTML;}w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${safe(title)}</title><style>body{font-family:Arial,"Cairo",sans-serif;padding:24px;color:#183734}h1{font-size:22px;margin:0 0 16px}.print-table{width:100%;border-collapse:collapse;direction:rtl;font-size:12px}.print-table th,.print-table td{border:1px solid #cfdad6;padding:8px 10px;text-align:center;vertical-align:middle}.print-table th{background:#edf5f2;font-weight:800}.print-table td:first-child{text-align:right}@page{size:A4 landscape;margin:10mm}@media print{button{display:none!important}}</style></head><body><h1>${safe(title)}</h1>${content}<script>window.onload=()=>window.print();</script></body></html>`);w.document.close();w.focus();}
