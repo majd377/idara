@@ -1,6 +1,6 @@
 {
   "name": "amin-building-manager",
-  "version": "10.0.0",
+  "version": "52.0.0",
   "private": true,
   "description": "عمارة الأمين — Firebase + Google + Firestore",
   "scripts": {

@@ -1,0 +1,12 @@
+V44
+- PDF كشف الحساب now formats the report table itself to the usable A4 landscape width; old inline min-width is removed from the cloned export table.
+- PDF output remains driven by the same report HTML used by printing.
+- Roles are enforced in navigation/UI and Firestore rules: system manager gets everything and is the only settings/permissions user; manager has everything except settings; accountant works broadly with approval gates for changes/deletes to records created by others; readings employee is limited to dashboard/electricity/water; viewer is read-only; resident sees only requested resident sections.
+- New non-owner accounts start as pending until system manager approval; approval is one-time and delete remains available.
+- Added in-settings activity monitoring with filters, sorting, date/time, user, action, section, and details; pending approval badge added to settings.
+- Accountant can fill blank pre-created water/electricity measurement rows directly; changing an already populated value from another user requires approval.
+- Resident account selector links a specific resident to the login and resident water view shows only the selected week.
+- Fund summary includes resident debt and subtracts it from the displayed cash balance; dashboard shows revenue - withdrawals - resident debt.
+- Section title standardized to "الإيرادات و الصندوق" and cup-price helper text simplified.
+- Homepage quick links are permission-aware and inaccessible destinations are disabled/not shown.
+- PWA cache/version bumped to V44 for installable standalone app behavior.

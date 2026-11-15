@@ -1,3 +1,9 @@
+# النسخة الحالية: V52
+
+للتعديلات الأخيرة وطريقة نشرها راجع [V52_RELEASE_NOTES.md](V52_RELEASE_NOTES.md).
+
+---
+
 # عمارة الأمين — V16 Embedded Historical Seed
 
 نسخة مبنية على V11 المستقرة، مع **بيانات Excel القديمة مضمنة داخل الكود** بدل استيراد Excel من داخل الموقع.
@@ -75,3 +81,11 @@
 - Sequential carry-forward accounting: only final unpaid amount becomes next-period debt; overpayment becomes carry-forward credit.
 - Legacy/manual debts are anchored to the first system period and roll forward.
 - Resident reports default to all periods, oldest to newest; PDF export renders only the resident statement table.
+
+## مهم جدًا لـ Firebase / Resident
+إذا ظهرت رسالة `Missing or insufficient permissions` بعد رفع ملفات الموقع، يجب نشر `firestore.rules` إلى نفس مشروع Firebase (`box0-238b3`). رفع ملفات GitHub Pages وحده لا يغيّر قواعد Firestore. بعد نشر القواعد، سجّل خروجًا ثم دخولًا للحساب.
+
+مثال باستخدام Firebase CLI داخل مجلد المشروع:
+```bash
+firebase deploy --only firestore:rules
+```
